@@ -30,7 +30,7 @@ from hybrid_control.robots.state import JointPositionCommand, Pose
 # The MuJoCo model is loaded from the packaged Panda assets; the XML is the single source of truth.
 MODEL_DIR = files("hybrid_control.sim_interfaces.mujoco.models.panda")
 XML_FILE = str(MODEL_DIR / "scene.xml")
-SHOW_VIEWER = False  # Set True for the interactive view.
+SHOW_VIEWER = True  # Set True for the interactive view.
 COM_MARKER_DIAMETER = 0.05  # metres; viewer-only marker, not part of the dynamics model.
 
 # --- Control parameters ---
@@ -57,9 +57,9 @@ GRIPPER_COMMAND_INIT = 255  # Fully open; actuator range is 0–255.
 # --- Position and orientation references ---
 # Targets are generated around the current end-effector pose, with a small randomized orientation field.
 RANDOM_SEED = 7
-TARGET_RADIUS = 0.1  # XYZ sampling box half-width per world axis (m).
+TARGET_RADIUS = 0.15  # XYZ sampling box half-width per world axis (m).
 ROTATION_ORDER = "zyx"  # Extrinsic rotations about fixed world axes: Z, Y, X.
-N_TARGETS = 5  # Includes the start and end orientation references.
+N_TARGETS = 10  # Includes the start and end orientation references.
 ORIENTATION_CENTER_DEG = np.array([-90.0, 0.0, 180.0])  # Absolute Z, Y, X angles.
 ORIENTATION_RANGE_DEG = np.array([40.0, 30.0, 40.0])  # Uniform ±offset per Euler angle.
 
