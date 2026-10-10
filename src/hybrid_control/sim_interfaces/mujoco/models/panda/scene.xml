@@ -1,0 +1,18 @@
+<mujoco model="panda scene">
+  <include file="panda.xml"/>
+  <statistic center="0.3 0 0.4" extent="1"/>
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <global azimuth="120" elevation="-20"/>
+  </visual>
+  <asset>
+    <texture name="ground_grid" type="2d" builtin="flat" mark="edge"
+             rgb1="0.22 0.25 0.28" markrgb="0.45 0.50 0.55" width="128" height="128"/>
+    <material name="ground_material" texture="ground_grid" texuniform="true"
+              texrepeat="4 4" reflectance="0"/>
+  </asset>
+  <worldbody>
+    <geom name="ground" type="plane" pos="0 0 0" size="0 0 0.05"
+          material="ground_material"/>
+  </worldbody>
+</mujoco>

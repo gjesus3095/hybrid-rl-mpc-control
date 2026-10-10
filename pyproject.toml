@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hybrid-rl-ik-control"
+version = "0.1.0"
+description = "Hybrid RL base control and IK/QP robotic manipulation"
+readme = "README.md"
+license-files = [
+    "docs/licenses/hybrid_push_control_panda-LICENSE",
+    "src/hybrid_control/sim_interfaces/mujoco/models/panda/LICENSE",
+]
+requires-python = ">=3.10,<3.12"
+dependencies = [
+    "numpy~=1.23.5",
+    "pandas~=2.0.3",
+    "scipy~=1.9.3",
+    "matplotlib~=3.10.0",
+    "osqp~=0.6.7",
+    "mujoco~=3.2.7",
+]
+
+[project.optional-dependencies]
+isaac = []
+
+[dependency-groups]
+test = ["pytest>=7,<9"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["hybrid_control*"]
+namespaces = true
+
+[tool.setuptools.package-data]
+"hybrid_control.sim_interfaces.mujoco.models.panda" = [
+    "*.xml", "*.md", "*.png", "LICENSE", "assets/*.obj", "assets/*.stl",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
