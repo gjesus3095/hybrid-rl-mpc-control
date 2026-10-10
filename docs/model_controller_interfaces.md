@@ -1,62 +1,40 @@
-# Robot models and controllers
+# Robot model and controller interfaces
 
-The robot model exposes state, kinematics, and position command application for
-one ordered group of joints. A controller computes a command. The experiment
-owns the simulation and determines when to apply that command and advance physics.
+The robot model reads state and kinematics and applies commands. A controller computes a command from a target. The experiment owns the simulation and decides when to step physics.
 
-This version supports NumPy and MuJoCo. Isaac integration, batched tensors,
-mass matrices, force sensing, and velocity/effort commands are deferred.
+## RobotModel
 
-## Shared contracts
+`hybrid_control.robots.model.RobotModel` is the abstract interface. `MujocoRobotModel` is the only current implementation.
 
-`hybrid_control.robots.model.RobotModel` is an abstract base class with:
+| Method / Property | Returns | Notes |
+|---|---|---|
+| `joint_names` | `tuple[str, ...]` | Selected joints in control order |
+| `position_limits` | `(lower, upper)` each `(n,)` | Copies; unlimited joints use ±inf |
+| `get_state()` | `JointState(time, positions, velocities)` | Snapshot; does not step physics |
+| `get_com_state()` | `CenterOfMassState(time, position)` | Mass-weighted world CoM of whole robot |
+| `get_pose(frame_name)` | `Pose(position, quaternion)` | Body origin in world frame |
+| `get_jacobian(frame_name)` | `np.ndarray (6, n)` | World linear rows first, then angular |
+| `apply_command(command)` | `None` | Writes actuator references; does not step |
 
-| Interface | Meaning |
-| --- | --- |
-| `joint_names` | Ordered tuple of selected scalar joint names |
-| `position_limits` | Copies of lower/upper vectors `(n,)`; unlimited joints use infinities |
-| `get_state()` | `JointState(time, positions, velocities)` in selected joint order |
-| `get_com_state()` | `CenterOfMassState(time, position)` for the robot's mass-weighted world CoM |
-| `get_pose(frame_name)` | `Pose(position, quaternion)` at a named body origin |
-| `get_jacobian(frame_name)` | `(6, n)` matrix: world linear velocity followed by world angular velocity |
-| `apply_command(command)` | Set selected position actuator references without advancing physics |
+**Units:** radians for hinge joints, metres for slides; velocities in those units/second.  
+**Quaternions:** xyzw order everywhere (MuJoCo's internal wxyz is converted at the boundary).  
+**Jacobian:** `J @ dq` gives world twist `[vx, vy, vz, wx, wy, wz]` in m/s and rad/s.
 
-State and command vectors use radians for hinge joints and metres for slides;
-velocities use the corresponding units per second. Time is simulated seconds.
-Poses use world-frame metres and normalized **xyzw** quaternions. Jacobian columns
-follow `joint_names`; the matrix gives the selected joints' contribution to body
-motion, excluding any unselected base or gripper DoFs.
+State classes live in `hybrid_control.robots.state`: `JointState`, `CenterOfMassState`, `Pose`, `JointPositionCommand`, `JointVelocityCommand`. They copy inputs, validate on construction, and return read-only arrays.
 
-`Pose`, `JointState`, `CenterOfMassState`, and `JointPositionCommand` live in
-`hybrid_control.robots.state`. They validate dimensions and finite values and own
-read-only array copies. Pose construction normalizes nonzero quaternions and
-rejects zero/nonfinite quaternions. Commands must contain exactly the receiving
-model's joint names in its declared order.
+## MujocoRobotModel
 
-## MuJoCo adapter
-
-`MujocoRobotModel(model, data, joint_actuator_pairs)` wraps existing `MjModel` and
-`MjData`. For example, the Panda arm mapping is:
+Wraps `MjModel` and `MjData` with explicit joint-to-actuator mappings.
 
 ```python
-joint_actuator_pairs = tuple(
-    (f"joint{i}", f"actuator{i}") for i in range(1, 8)
-)
-robot = MujocoRobotModel(model, data, joint_actuator_pairs)
-```
+from hybrid_control.sim_interfaces.mujoco.adapter import MujocoRobotModel
 
-CoM includes the fixed base and every descendant link, including unselected
-gripper joints. By default its root is the common top-level body tree containing
-the selected joints; other scene objects are excluded. Pass `root_body="name"`
-to the constructor or `from_xml_path` to choose a subtree explicitly. That body
-must contain all selected joints and have positive subtree mass; the world body
-is not a robot root. `get_com_state()` reads MuJoCo's current `subtree_com` without
-stepping; update kinematics after changing state, just as for pose reads.
+joint_actuator_pairs = tuple((f"joint{i}", f"actuator{i}") for i in range(1, 8))
 
-For a standalone experiment, loading and initialization can be kept compact:
+# Load from XML (refreshes kinematics once)
+robot = MujocoRobotModel.from_xml_path("scene.xml", joint_actuator_pairs)
 
-```python
-robot = MujocoRobotModel.from_xml_path(XML_FILE, joint_actuator_pairs)
+# Set initial pose; zeros selected joint velocities, then calls mj_forward
 robot.initialize(
     Q_INIT,
     extra_joint_positions={"finger_joint1": 0.04, "finger_joint2": 0.04},
@@ -64,95 +42,47 @@ robot.initialize(
 )
 ```
 
-`initialize` validates all names, positions, and controls before writing. It sets
-the selected joint positions and matching actuator references, zeros velocities
-for initialized joints, and refreshes kinematics. Optional named extras handle
-unselected joints and actuators such as the Panda gripper. Initialization retains
-simulation time, other joint state, other controls, and applied forces; it does
-not advance physics or perform a full simulation reset.
+`apply_command` writes `data.ctrl` only — it does not clamp, change `qpos`, or step physics. The caller must call `mj_forward` after editing state manually. The native `model` and `data` are available on the instance.
 
-The adapter resolves joint IDs, `qpos` addresses, velocity/Jacobian addresses, and
-actuator IDs independently. Arbitrary joint order and noncontiguous selections
-are supported, including scenes with unselected free joints. Selected joints
-must be hinges or slides with direct, unit-gear position servos. Equivalent
-stateless `general` servos, such as those in the Panda XML, are supported. Tendon,
-motor, velocity, and activation-dynamics actuators are rejected for this interface.
+CoM is scoped to the robot's body subtree, excluding other objects in the scene. Override with `root_body="name"` if the auto-detected root is wrong.
 
-The adapter exposes named **body origins**, not sites or body centres of mass.
-It converts MuJoCo's wxyz quaternion to xyzw at the boundary. Reads do not call
-`mj_forward` or `mj_step`; loading and initialization helpers refresh kinematics,
-while the caller must do so after manually editing state. Do not step concurrently
-with controller computation.
+## Controller
 
-`apply_command` writes only the selected `data.ctrl` entries. It does not change
-`qpos`, clamp references, reset state, or advance time. Joint limits are those in
-the model; MuJoCo still enforces its configured actuator control and force limits
-during physics. The gripper remains explicitly managed by the experiment.
-The adapter offers XML loading and initialization helpers. Full simulation resets,
-stepping, rendering, shutdown, and test-specific bias-force compensation remain
-in the experiment. Native `model` and `data`
-are available on the concrete adapter for those operations.
+`hybrid_control.controllers.base.Controller[TargetT, CommandT]` defines two methods:
 
-## Controller lifecycle and IK
+- `compute(target, dt)` — returns a command; must not apply it or mutate the simulation.
+- `reset()` — clears internal state between episodes.
 
-`hybrid_control.controllers.base.Controller[TargetT, CommandT]` defines
-`compute(target, dt)` and `reset()`. Computation may update a controller's own
-memory but must not apply commands or change the robot. `reset()` clears internal
-memory between episodes; its default implementation does nothing.
+### IK/QP controller
 
-`InverseKinematicsController(robot, config)` implements this contract with
-`PoseTarget(frame_name, pose)` and `JointPositionCommand`. `IKQPConfig` contains
-per-joint velocity bounds, position/orientation gains and weights, and damping.
-Bounds follow the model's joint order. The existing QP objective, solver settings,
-and feasibility clamp are retained; the controller integrates its computed
-velocity as `q_command = q_current + dq * dt`.
+`InverseKinematicsController` takes a `PoseTarget` and returns a `JointPositionCommand`.
 
 ```python
-from hybrid_control.sim_interfaces.mujoco.adapter import MujocoRobotModel
 from hybrid_control.controllers.ik_qp.controller import (
     IKQPConfig, InverseKinematicsController, PoseTarget,
 )
 from hybrid_control.robots.state import Pose
 
-# model/data are already initialized and kinematics have been refreshed.
-robot = MujocoRobotModel(model, data, joint_actuator_pairs)
-controller = InverseKinematicsController(robot, IKQPConfig(
+config = IKQPConfig(
     velocity_lower=DQ_MIN, velocity_upper=DQ_MAX,
-    kp_pos=KP_POS, kp_ori=KP_ORI, damping=JOINT_VEL_WEIGHT,
-))
+    kp_pos=80.0, kp_ori=60.0, damping=1e5,
+)
+controller = InverseKinematicsController(robot, config)
+
 target = PoseTarget("hand", Pose(target_position, target_quaternion_xyzw))
-command = controller.compute(target, dt)
-robot.apply_command(command)
-# The experiment now performs its physics substeps and refreshes kinematics.
+command = controller.compute(target, dt)   # does not apply the command
+robot.apply_command(command)               # writes actuator references
+# caller steps physics and calls mj_forward
 ```
 
-The previous `ik_qp_velocity_step_pose` and `send_position_command` entry points
-are replaced by `compute`. All repository callers use the new interface. To inspect
-the requested velocity, use `(command.positions - state.positions) / dt`, where
-`state` is captured before computation.
+The QP solves for joint velocities bounded by `velocity_lower`/`velocity_upper`, then integrates: `q_cmd = q_current + dq * dt`.
 
-To add a controller, subclass `Controller` with its target and command types,
-accept the dependencies it needs in its constructor, implement `compute`, and
-override `reset` only if it has internal state. Keep simulator access in a model
-adapter. A future controller can return another command type without changing
-the base class; applying a new command mode will require an explicit model API
-extension and compatible simulator actuators.
-
-## Validation
-
-Run all contract and Panda tracking checks with:
+## Running tests and the tracking experiment
 
 ```bash
-env -u PYTHONPATH uv run --extra test pytest -q
-```
+# Contract tests (61 tests)
+uv run pytest -q
 
-The tests exercise named and reordered mappings, free-joint address differences,
-linear/angular Jacobians against finite differences, quaternion conventions,
-invalid inputs, command isolation, computation without simulation changes, and
-IK against a small simulator-independent model. The existing seeded Panda
-position-only and combined pose tracking scenarios retain their acceptance
-thresholds. Configure those experiments using the constants at the top of
-`tests/test_ik_qp.py`; standalone execution retains the viewer and grid ground.
-The viewer draws the target in red and a green, 5 cm diameter sphere at the
-robot CoM. The CoM marker updates each control cycle and is display-only, with
-no added mass or collisions. Its size is configured by `COM_MARKER_DIAMETER`.
+# Pose tracking experiment — edit SHOW_VIEWER and constants at the top
+uv run python scripts/mujoco/track_targets.py
+```

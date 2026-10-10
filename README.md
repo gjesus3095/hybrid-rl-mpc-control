@@ -14,7 +14,7 @@ The Panda model and controller were imported from `../hybrid_push_control_panda`
 - [IK/QP controller](src/hybrid_control/controllers/ik_qp/controller.py), including its admittance and low-pass filters.
 - [Math helpers](src/hybrid_control/utils/math_helpers.py) required by the controller.
 
-The controller computes commands through a simulator-independent `RobotModel` interface. `MujocoRobotModel` wraps an existing simulation using explicit joint-to-actuator mappings, and the generic `Controller` base supports future controllers. See [model and controller interfaces](docs/model_controller_interfaces.md) for conventions and usage, and [import notes](docs/panda_import.md) for provenance.
+The controller computes commands through a simulator-independent `RobotModel` interface. `MujocoRobotModel` wraps an existing simulation using explicit joint-to-actuator mappings, and the generic `Controller` base supports future controllers. See [model and controller interfaces](docs/model_controller_interfaces.md) for conventions and usage.
 
 ## Setup
 
@@ -123,7 +123,6 @@ hybrid-rl-ik-control/
 │
 └── docs/
     ├── model_controller_interfaces.md
-    ├── panda_import.md
     ├── architecture.md                    [planned]
     └── experiments.md                    [planned]
 ```
