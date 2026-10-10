@@ -79,12 +79,17 @@ class MujocoModifier:
 
     @staticmethod
     def build_mobile_base_spec(xml_file: str, base_range: float = 2.0,
-                               servo_kp: float = 5000.0) -> mujoco.MjSpec:
-        """Load a scene XML and add X/Y slide joints to link0 with position servo actuators.
+                               servo_kp: float = 5000.0,
+                               yaw_range: float = np.pi,
+                               yaw_servo_kp: float = 500.0) -> mujoco.MjSpec:
+        """Load a scene XML and add X/Y/Yaw DOFs to link0 with position servo actuators.
 
-        The added joints (base_x, base_y) and actuators (base_x_servo, base_y_servo) sit
-        outside any IK joint list — they act as a base disturbance controllable via
-        MujocoRobotModel.apply_base_command.
+        Joints added (all outside the IK joint list):
+          base_x  (slide, world X),  base_x_servo
+          base_y  (slide, world Y),  base_y_servo
+          base_yaw (hinge, world Z), base_yaw_servo
+
+        Command order for MujocoRobotModel.apply_base_command: [x, y, yaw].
         """
         spec = mujoco.MjSpec.from_file(xml_file)
         link0 = spec.find_body("link0")
@@ -97,17 +102,28 @@ class MujocoModifier:
             j.range = [-base_range, base_range]
             j.limited = True
 
-        for joint_name, servo_name in (("base_x", "base_x_servo"), ("base_y", "base_y_servo")):
+        j = link0.add_joint()
+        j.name = "base_yaw"
+        j.type = mujoco.mjtJoint.mjJNT_HINGE
+        j.axis = [0, 0, 1]
+        j.range = [-yaw_range, yaw_range]
+        j.limited = True
+
+        for joint_name, servo_name, kp, rng in (
+            ("base_x",   "base_x_servo",   servo_kp,     base_range),
+            ("base_y",   "base_y_servo",   servo_kp,     base_range),
+            ("base_yaw", "base_yaw_servo", yaw_servo_kp, yaw_range),
+        ):
             a = spec.add_actuator()
             a.name = servo_name
             a.target = joint_name
             a.trntype = mujoco.mjtTrn.mjTRN_JOINT
             a.gaintype = mujoco.mjtGain.mjGAIN_FIXED
-            a.gainprm[0] = servo_kp
+            a.gainprm[0] = kp
             a.biastype = mujoco.mjtBias.mjBIAS_AFFINE
             a.biasprm[0] = 0
-            a.biasprm[1] = -servo_kp
+            a.biasprm[1] = -kp
             a.ctrllimited = True
-            a.ctrlrange = [-base_range, base_range]
+            a.ctrlrange = [-rng, rng]
 
         return spec

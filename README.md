@@ -51,9 +51,9 @@ Each reference runs for five simulated seconds by default, with control at 50 Hz
 
 ## Base Disturbance Experiment
 
-`scripts/mujoco/base_disturbance.py` tests whether the IK/QP controller can maintain a fixed world-frame end-effector pose while the robot base translates in X/Y.
+`scripts/mujoco/base_disturbance.py` tests whether the IK/QP controller can maintain a fixed world-frame end-effector pose while the robot base moves in X/Y/Yaw.
 
-The script adds two prismatic (slide) joints to `link0` programmatically using MuJoCo's `MjSpec` API. These joints are outside the IK — they act as a disturbance. The IK/QP compensates purely through arm motion to hold the hand at its initial world-frame pose.
+`MujocoModifier.build_mobile_base_spec` adds three DOFs to `link0` via `MjSpec`: two prismatic joints (X, Y) and one hinge joint (Yaw around Z). All three are outside the IK — they act as a disturbance. The IK/QP compensates purely through arm motion.
 
 ```bash
 uv run python scripts/mujoco/base_disturbance.py
@@ -61,12 +61,30 @@ uv run python scripts/mujoco/base_disturbance.py
 
 Configuration at the top of the script:
 
-- `BASE_MOTION_RADIUS`: max base command per axis in metres (default 0.5 m; scene hard limits are ±2 m).
-- `N_BASE_POSITIONS`: number of random base waypoints.
+- `BASE_MOTION_RADIUS`: max XY command per axis in metres (default 0.2 m; scene limits ±2 m).
+- `BASE_YAW_RADIUS`: max yaw command in radians (default π/6).
+- `N_BASE_POSITIONS`: number of random waypoints.
 - `RANDOM_SEED`: reproducible waypoints.
 - `SHOW_VIEWER`: set `True` for the interactive view.
 
-Note: Base displacements that push the world-frame target outside the arm workspace will report FAIL with a large position error. The Panda in its default configuration (`Q_INIT`) is near its reach boundary in the forward direction, so large negative-X base displacements are unreachable.
+Note: base displacements that push the world-frame target outside the arm workspace report FAIL with a large position error.
+
+## Interactive Base Disturbance
+
+`scripts/mujoco/base_disturbance_keyboard.py` runs the same experiment interactively with keyboard control.
+
+```bash
+uv run python scripts/mujoco/base_disturbance_keyboard.py
+```
+
+| Key | Action |
+|-----|--------|
+| `← / →` | base X (left / right) |
+| `↑ / ↓` | base Y (forward / back) |
+| `Space` | base Yaw CCW (+Z) |
+| `AltGr` | base Yaw CW (−Z) |
+
+The EE target is fixed at the initial grasp world-frame pose. The arm must compensate for all base motion purely through joint motion.
 
 ## Project Structure
 
@@ -128,6 +146,7 @@ hybrid-rl-ik-control/
 │   ├── mujoco/
 │   │   ├── track_targets.py
 │   │   ├── base_disturbance.py
+│   │   ├── base_disturbance_keyboard.py
 │   │   └── test_trajectory.py            [planned]
 │   ├── isaac/                            [planned]
 │   │   ├── test_ik.py

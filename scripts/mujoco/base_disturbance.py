@@ -43,10 +43,13 @@ SHOW_VIEWER = True
 COM_MARKER_DIAMETER = 0.05  # metres; viewer-only sphere, no mass or collisions.
 
 # --- Base motion ---
-BASE_MOTION_RADIUS = 0.2   # m, max command per axis; scene limits are ±2 m.
-N_BASE_POSITIONS = 10       # random base waypoints to test.
-BASE_SERVO_KP = 5000.0     # N/m; stiff position servo keeps base at commanded position.
-BASE_RANGE = 2.0           # m; hard joint limit in the model.
+BASE_MOTION_RADIUS = 0.2        # m, max XY command per axis; scene limits are ±2 m.
+BASE_YAW_RADIUS = np.pi / 6     # rad, max yaw command; scene limits are ±π.
+N_BASE_POSITIONS = 10           # random base waypoints to test.
+BASE_SERVO_KP = 5000.0          # N/m; stiff position servo for X/Y.
+BASE_YAW_SERVO_KP = 500.0       # N·m/rad; position servo for yaw.
+BASE_RANGE = 2.0                # m; hard joint limit in the model.
+BASE_YAW_RANGE = np.pi          # rad; hard joint limit in the model.
 
 # --- Control parameters ---
 JOINT_ACTUATOR_PAIRS = tuple((f"joint{i}", f"actuator{i}") for i in range(1, 8))
@@ -91,20 +94,24 @@ JOINT_SLACK = 1e-3
 # ==================================================================================================
 def create_simulation() -> MujocoRobotModel:
     """Compile mobile base model and initialize arm and base to home positions."""
-    spec = MujocoModifier.build_mobile_base_spec(XML_FILE, base_range=BASE_RANGE, servo_kp=BASE_SERVO_KP)
+    spec = MujocoModifier.build_mobile_base_spec(
+        XML_FILE, base_range=BASE_RANGE, servo_kp=BASE_SERVO_KP,
+        yaw_range=BASE_YAW_RANGE, yaw_servo_kp=BASE_YAW_SERVO_KP,
+    )
     model = spec.compile()
     data = mujoco.MjData(model)
     mujoco.mj_forward(model, data)
 
     robot = MujocoRobotModel(
         model, data, JOINT_ACTUATOR_PAIRS,
-        base_actuator_names=("base_x_servo", "base_y_servo"),
+        base_actuator_names=("base_x_servo", "base_y_servo", "base_yaw_servo"),
     )
     robot.initialize(
         Q_INIT,
         extra_joint_positions={
             "base_x": 0.0,
             "base_y": 0.0,
+            "base_yaw": 0.0,
             "finger_joint1": FINGER_POSITION_INIT,
             "finger_joint2": FINGER_POSITION_INIT,
         },
@@ -112,6 +119,7 @@ def create_simulation() -> MujocoRobotModel:
             "actuator8": GRIPPER_COMMAND_INIT,
             "base_x_servo": 0.0,
             "base_y_servo": 0.0,
+            "base_yaw_servo": 0.0,
         },
     )
     return robot
@@ -126,11 +134,12 @@ def create_controller(robot: RobotModel) -> Controller[PoseTarget, JointPosition
     return InverseKinematicsController(robot, config)
 
 
-def set_base_command(robot: MujocoRobotModel, x: float, y: float):
-    """Write a clamped base position command via the robot model's base actuators."""
+def set_base_command(robot: MujocoRobotModel, x: float, y: float, yaw: float):
+    """Write a clamped base position command [x, y, yaw] via the robot model's base actuators."""
     robot.apply_base_command([
-        np.clip(x, -BASE_MOTION_RADIUS, BASE_MOTION_RADIUS),
-        np.clip(y, -BASE_MOTION_RADIUS, BASE_MOTION_RADIUS),
+        np.clip(x,   -BASE_MOTION_RADIUS, BASE_MOTION_RADIUS),
+        np.clip(y,   -BASE_MOTION_RADIUS, BASE_MOTION_RADIUS),
+        np.clip(yaw, -BASE_YAW_RADIUS,    BASE_YAW_RADIUS),
     ])
 
 
@@ -248,7 +257,9 @@ def run_base_disturbance(*, viewer=False):
     orientation_range = np.asarray(ORIENTATION_RANGE_DEG, dtype=float)
 
     rng = np.random.default_rng(RANDOM_SEED)
-    base_waypoints = rng.uniform(-BASE_MOTION_RADIUS, BASE_MOTION_RADIUS, size=(N_BASE_POSITIONS, 2))
+    base_xy = rng.uniform(-BASE_MOTION_RADIUS, BASE_MOTION_RADIUS, size=(N_BASE_POSITIONS, 2))
+    base_yaws = rng.uniform(-BASE_YAW_RADIUS, BASE_YAW_RADIUS, size=N_BASE_POSITIONS)
+    base_waypoints = np.column_stack([base_xy, base_yaws])
     # Arm targets: XYZ offsets around the initial world-frame hand position.
     arm_positions = initial_hand_pos + rng.uniform(-TARGET_RADIUS, TARGET_RADIUS, size=(N_BASE_POSITIONS, 3))
     # Orientations: random Euler angles around the center; first and last equal the center.
@@ -263,19 +274,20 @@ def run_base_disturbance(*, viewer=False):
 
     results = []
     with viewer_context as handle:
-        for idx, ((wx, wy), pos, quat) in enumerate(
+        for idx, ((wx, wy, wyaw), pos, quat) in enumerate(
             zip(base_waypoints, arm_positions, arm_quaternions), start=1
         ):
             target = PoseTarget(FRAME_CONTROL, Pose(pos, quat))
             context = f"Waypoint {idx}/{N_BASE_POSITIONS} (seed={RANDOM_SEED})"
             logger.info(
-                "%s: base=[%.3f, %.3f] m, hand=%s m (world frame)",
+                "%s: base=[%.3f, %.3f] m, yaw=%.1f deg, hand=%s m (world frame)",
                 context,
                 wx,
                 wy,
+                np.degrees(wyaw),
                 np.round(pos, 4),
             )
-            set_base_command(robot, wx, wy)
+            set_base_command(robot, wx, wy, wyaw)
             _modifier.update_overlay(handle, robot, target.pose)
             elapsed = track_reference(robot, controller, target, handle, context)
             results.append(report_tracking_error(
