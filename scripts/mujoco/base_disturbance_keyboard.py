@@ -1,0 +1,196 @@
+"""Interactive base disturbance: arrow keys move the base X/Y while IK/QP tracks a fixed world-frame EE target.
+
+Controls:
+    ← →   base X  (left / right)
+    ↑ ↓   base Y  (forward / back)
+
+The EE target is fixed at the initial grasp pose in world frame.
+The arm compensates for every base displacement purely through joint motion.
+
+Run:
+    uv run python scripts/mujoco/base_disturbance_keyboard.py
+"""
+
+from importlib.resources import files
+import time
+
+import mujoco
+import mujoco.viewer as mujoco_viewer
+import numpy as np
+
+from hybrid_control.sim_interfaces.mujoco.adapter import MujocoRobotModel
+from hybrid_control.sim_interfaces.mujoco.modifier import MujocoModifier
+from hybrid_control.controllers.ik_qp.controller import (
+    IKQPConfig,
+    InverseKinematicsController,
+    PoseTarget,
+)
+from hybrid_control.utils.logger import logger
+
+
+# ==================================================================================================
+# CONFIGURATION
+# ==================================================================================================
+MODEL_DIR = files("hybrid_control.sim_interfaces.mujoco.models.panda")
+XML_FILE = str(MODEL_DIR / "scene.xml")
+COM_MARKER_DIAMETER = 0.05
+
+FRAME_CONTROL = "grasp"
+DT_CTRL = 0.02
+JOINT_ACTUATOR_PAIRS = tuple((f"joint{i}", f"actuator{i}") for i in range(1, 8))
+N_DOFS = len(JOINT_ACTUATOR_PAIRS)
+DQ_MAX = np.full(N_DOFS, 20.0)
+DQ_MIN = -DQ_MAX
+KP_POS = 80.0
+KP_ORI = 60.0
+JOINT_VEL_WEIGHT = 1e5
+POSITION_WEIGHT = 1.0
+ORIENTATION_WEIGHT = 1.0
+
+Q_INIT = np.array([0.0, 0.0, 0.0, -np.pi / 2, 0.0, np.pi / 2, -np.pi / 4])
+FINGER_POSITION_INIT = 0.04
+GRIPPER_COMMAND_INIT = 255
+
+BASE_VEL = 0.8     # m/s reference speed while key is held
+BASE_RANGE = 2.0   # hard joint limit in the model
+BASE_SERVO_KP = 5000.0
+STATUS_LOG_PERIOD = 1.0  # seconds; print a compact base/EE status line periodically
+
+# GLFW arrow key codes
+_KEY_RIGHT, _KEY_LEFT, _KEY_UP, _KEY_DOWN = 262, 263, 265, 264
+# GLFW fires REPEAT events at ~30 Hz while a key is held.
+# Track the last event time per key; treat the key as held while within this window.
+_KEY_HELD_TIMEOUT = 0.12  # seconds (~4× the 33 ms repeat interval)
+
+
+# ==================================================================================================
+# SETUP
+# ==================================================================================================
+def _create_simulation() -> MujocoRobotModel:
+    spec = MujocoModifier.build_mobile_base_spec(XML_FILE, base_range=BASE_RANGE, servo_kp=BASE_SERVO_KP)
+    model = spec.compile()
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    robot = MujocoRobotModel(
+        model, data, JOINT_ACTUATOR_PAIRS,
+        base_actuator_names=("base_x_servo", "base_y_servo"),
+    )
+    robot.initialize(
+        Q_INIT,
+        extra_joint_positions={
+            "base_x": 0.0, "base_y": 0.0,
+            "finger_joint1": FINGER_POSITION_INIT,
+            "finger_joint2": FINGER_POSITION_INIT,
+        },
+        extra_actuator_controls={
+            "actuator8": GRIPPER_COMMAND_INIT,
+            "base_x_servo": 0.0,
+            "base_y_servo": 0.0,
+        },
+    )
+    return robot
+
+
+def _create_controller(robot):
+    config = IKQPConfig(
+        velocity_lower=DQ_MIN, velocity_upper=DQ_MAX,
+        kp_pos=KP_POS, kp_ori=KP_ORI, damping=JOINT_VEL_WEIGHT,
+        position_weight=POSITION_WEIGHT, orientation_weight=ORIENTATION_WEIGHT,
+    )
+    return InverseKinematicsController(robot, config)
+
+
+# ==================================================================================================
+# MAIN
+# ==================================================================================================
+def run():
+    logger.info("Starting interactive base disturbance demo with fixed world-frame end-effector target.")
+    robot = _create_simulation()
+    controller = _create_controller(robot)
+    controller.reset()
+
+    # Record fixed world-frame EE target at the initial arm pose.
+    target = PoseTarget(FRAME_CONTROL, robot.get_pose(FRAME_CONTROL))
+    modifier = MujocoModifier(COM_MARKER_DIAMETER)
+
+    model, data = robot.model, robot.data
+    arm_dofs = np.array([model.joint(name).dofadr[0] for name in robot.joint_names])
+    substeps = max(1, round(DT_CTRL / model.opt.timestep))
+    dt = substeps * model.opt.timestep
+
+    base_ref = np.zeros(2)
+    _arrow_keys = (_KEY_RIGHT, _KEY_LEFT, _KEY_UP, _KEY_DOWN)
+    _last_key_time: dict[int, float] = {}
+    last_status_log = 0.0
+
+    def key_callback(keycode: int) -> None:
+        if keycode in _arrow_keys:
+            _last_key_time[keycode] = time.monotonic()
+
+    def _held(keycode: int, now: float) -> bool:
+        return now - _last_key_time.get(keycode, 0.0) < _KEY_HELD_TIMEOUT
+
+    logger.info("Interactive controls: left/right move base X, up/down move base Y. Close viewer to exit.")
+
+    with mujoco_viewer.launch_passive(model, data, key_callback=key_callback) as handle:
+        while handle.is_running():
+            started = time.perf_counter()
+            now = time.monotonic()
+
+            # Integrate base reference while arrow keys are held.
+            if _held(_KEY_RIGHT, now):
+                base_ref[0] = np.clip(base_ref[0] + BASE_VEL * dt, -BASE_RANGE, BASE_RANGE)
+            if _held(_KEY_LEFT, now):
+                base_ref[0] = np.clip(base_ref[0] - BASE_VEL * dt, -BASE_RANGE, BASE_RANGE)
+            if _held(_KEY_UP, now):
+                base_ref[1] = np.clip(base_ref[1] + BASE_VEL * dt, -BASE_RANGE, BASE_RANGE)
+            if _held(_KEY_DOWN, now):
+                base_ref[1] = np.clip(base_ref[1] - BASE_VEL * dt, -BASE_RANGE, BASE_RANGE)
+
+            robot.apply_base_command(base_ref)
+            command = controller.compute(target, dt)
+            robot.apply_command(command)
+
+            for _ in range(substeps):
+                data.qfrc_applied[arm_dofs] = data.qfrc_bias[arm_dofs]
+                mujoco.mj_step(model, data)
+                mujoco.mj_forward(model, data)
+
+            now_log = time.monotonic()
+            if now_log - last_status_log >= STATUS_LOG_PERIOD:
+                actual_pose = robot.get_pose(FRAME_CONTROL)
+                base_xy = np.array([
+                    data.qpos[model.joint("base_x").qposadr[0]],
+                    data.qpos[model.joint("base_y").qposadr[0]],
+                ])
+                pos_error = float(np.linalg.norm(target.pose.position - actual_pose.position))
+                cosine = np.clip(abs(np.dot(target.pose.quaternion, actual_pose.quaternion)), 0.0, 1.0)
+                ori_error = float(2.0 * np.arccos(cosine))
+                message = (
+                    "base=(%.3f, %.3f) m | ee_pos_err=%.4f m | ee_ori_err=%.3f deg"
+                )
+                if pos_error > 5e-3 or np.degrees(ori_error) > 1.0:
+                    logger.warning(
+                        message,
+                        base_xy[0],
+                        base_xy[1],
+                        pos_error,
+                        np.degrees(ori_error),
+                    )
+                else:
+                    logger.info(
+                        message,
+                        base_xy[0],
+                        base_xy[1],
+                        pos_error,
+                        np.degrees(ori_error),
+                    )
+                last_status_log = now_log
+
+            modifier.update_overlay(handle, robot, target.pose)
+            handle.sync()
+            time.sleep(max(0.0, dt - (time.perf_counter() - started)))
+
+
+if __name__ == "__main__":
+    run()

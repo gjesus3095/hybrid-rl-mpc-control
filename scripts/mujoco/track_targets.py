@@ -23,6 +23,7 @@ from hybrid_control.controllers.ik_qp.controller import (
 )
 from hybrid_control.robots.model import RobotModel
 from hybrid_control.robots.state import JointPositionCommand, Pose
+from hybrid_control.utils.logger import logger
 
 
 # ==================================================================================================
@@ -202,9 +203,10 @@ def assert_tracking_error(robot: RobotModel, target: PoseTarget, context: str):
     position_error = float(np.linalg.norm(reference - position))
     cosine = np.clip(abs(np.dot(target.pose.quaternion, actual_pose.quaternion)), 0.0, 1.0)
     orientation_error = float(2 * np.arccos(cosine))
-    print(
-        f"  error: {position_error * 1000:.2f} mm, "
-        f"{np.degrees(orientation_error):.2f} deg"
+    logger.info(
+        "Tracking error: %.2f mm, %.2f deg",
+        position_error * 1000.0,
+        np.degrees(orientation_error),
     )
     failures = []
     if not position_error < POSITION_TOLERANCE:
@@ -227,6 +229,12 @@ def assert_tracking_error(robot: RobotModel, target: PoseTarget, context: str):
 # ==================================================================================================
 def run_tracking(*, viewer=False, change_orientation=True):
     """Generate target poses, then track each one while validating final accuracy."""
+    logger.info(
+        "Starting Panda IK/QP target-tracking run: viewer=%s, targets=%s, seed=%s",
+        viewer,
+        N_TARGETS,
+        RANDOM_SEED,
+    )
     # Fail early on impossible settings so the experiment is self-checking before the sim starts.
     if not np.isfinite(TRACKING_SECONDS) or TRACKING_SECONDS <= 0:
         raise ValueError("TRACKING_SECONDS must be finite and positive")
@@ -266,7 +274,11 @@ def run_tracking(*, viewer=False, change_orientation=True):
         for position, quaternion in zip(references, quaternions)
     ]
 
-    print(f"Seed {RANDOM_SEED}; initial joints (rad): {robot.get_state().positions.round(4)}")
+    logger.info(
+        "Experiment seed=%s; initial joint positions (rad): %s",
+        RANDOM_SEED,
+        np.round(robot.get_state().positions, 4),
+    )
     results = []
     viewer_context = nullcontext(None)
     if viewer:
@@ -282,7 +294,7 @@ def run_tracking(*, viewer=False, change_orientation=True):
                 if change_orientation else "initial orientation"
             )
             context = f"{context}, {orientation_label}"
-            print(f"{context}: {target.pose.position.round(4)} m")
+            logger.info("%s: target position=%s m", context, np.round(target.pose.position, 4))
             _modifier.update_overlay(handle, robot, target.pose)
             elapsed = track_reference(robot, controller, target, handle, context)
             results.append(assert_tracking_error(

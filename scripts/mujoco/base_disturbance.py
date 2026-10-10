@@ -31,6 +31,7 @@ from hybrid_control.controllers.ik_qp.controller import (
 )
 from hybrid_control.robots.model import RobotModel
 from hybrid_control.robots.state import JointPositionCommand, Pose
+from hybrid_control.utils.logger import logger
 
 
 # ==================================================================================================
@@ -43,7 +44,7 @@ COM_MARKER_DIAMETER = 0.05  # metres; viewer-only sphere, no mass or collisions.
 
 # --- Base motion ---
 BASE_MOTION_RADIUS = 0.2   # m, max command per axis; scene limits are ±2 m.
-N_BASE_POSITIONS = 5       # random base waypoints to test.
+N_BASE_POSITIONS = 10       # random base waypoints to test.
 BASE_SERVO_KP = 5000.0     # N/m; stiff position servo keeps base at commanded position.
 BASE_RANGE = 2.0           # m; hard joint limit in the model.
 
@@ -214,14 +215,16 @@ def report_tracking_error(robot, target, context):
     pos_ok = position_error < POSITION_TOLERANCE
     ori_ok = orientation_error < ORIENTATION_TOLERANCE
     status = "PASS" if (pos_ok and ori_ok) else "FAIL"
-    print(
-        f"  [{status}] pos={position_error * 1000:.2f} mm "
-        f"(tol={POSITION_TOLERANCE * 1000:.0f} mm), "
-        f"ori={np.degrees(orientation_error):.2f} deg "
-        f"(tol={np.degrees(ORIENTATION_TOLERANCE):.1f} deg)"
+    logger.info(
+        "[%s] pos=%.2f mm (tol=%.0f mm), ori=%.2f deg (tol=%.1f deg)",
+        status,
+        position_error * 1000.0,
+        POSITION_TOLERANCE * 1000.0,
+        np.degrees(orientation_error),
+        np.degrees(ORIENTATION_TOLERANCE),
     )
     if not pos_ok:
-        print(f"    reference={reference.round(4)}, actual={position.round(4)}")
+        logger.warning("Reference=%s, actual=%s", np.round(reference, 4), np.round(position, 4))
     return position_error, orientation_error, pos_ok and ori_ok
 
 
@@ -230,6 +233,12 @@ def report_tracking_error(robot, target, context):
 # ==================================================================================================
 def run_base_disturbance(*, viewer=False):
     """Per waypoint: move base to a new random XY position and track a new random world-frame arm target."""
+    logger.info(
+        "Starting mobile-base disturbance experiment: viewer=%s, waypoints=%s, seed=%s",
+        viewer,
+        N_BASE_POSITIONS,
+        RANDOM_SEED,
+    )
     robot = create_simulation()
     controller = create_controller(robot)
     controller.reset()
@@ -259,9 +268,12 @@ def run_base_disturbance(*, viewer=False):
         ):
             target = PoseTarget(FRAME_CONTROL, Pose(pos, quat))
             context = f"Waypoint {idx}/{N_BASE_POSITIONS} (seed={RANDOM_SEED})"
-            print(
-                f"{context}: base=[{wx:.3f}, {wy:.3f}] m, "
-                f"hand={pos.round(4)} m (world frame)"
+            logger.info(
+                "%s: base=[%.3f, %.3f] m, hand=%s m (world frame)",
+                context,
+                wx,
+                wy,
+                np.round(pos, 4),
             )
             set_base_command(robot, wx, wy)
             _modifier.update_overlay(handle, robot, target.pose)
@@ -272,8 +284,13 @@ def run_base_disturbance(*, viewer=False):
             ))
 
     passed = sum(1 for *_, ok in results if ok)
-    print(f"\n{passed}/{len(results)} waypoints within tolerance "
-          f"(pos<{POSITION_TOLERANCE*1000:.0f}mm, ori<{np.degrees(ORIENTATION_TOLERANCE):.1f}deg)")
+    logger.info(
+        "Summary: %s/%s waypoints within tolerance (pos<%.0f mm, ori<%.1f deg)",
+        passed,
+        len(results),
+        POSITION_TOLERANCE * 1000.0,
+        np.degrees(ORIENTATION_TOLERANCE),
+    )
     return results
 
 
