@@ -49,6 +49,25 @@ Edit the **Configuration & Constants** block at the top of the script; there are
 
 Each reference runs for five simulated seconds by default, with control at 50 Hz and MuJoCo at 500 Hz. Assertions require position error below 5 mm, orientation error below 0.03 rad, and joint commands/states within limits, allowing solver and actuator tolerances. Failures report the target, seed, elapsed simulation time, and measured values versus limits. Joint bias-force compensation is enabled. Large offsets or different initial poses may produce unreachable references; the same tracking assertions apply.
 
+## Base Disturbance Experiment
+
+`scripts/mujoco/base_disturbance.py` tests whether the IK/QP controller can maintain a fixed world-frame end-effector pose while the robot base translates in X/Y.
+
+The script adds two prismatic (slide) joints to `link0` programmatically using MuJoCo's `MjSpec` API. These joints are outside the IK — they act as a disturbance. The IK/QP compensates purely through arm motion to hold the hand at its initial world-frame pose.
+
+```bash
+uv run python scripts/mujoco/base_disturbance.py
+```
+
+Configuration at the top of the script:
+
+- `BASE_MOTION_RADIUS`: max base command per axis in metres (default 0.5 m; scene hard limits are ±2 m).
+- `N_BASE_POSITIONS`: number of random base waypoints.
+- `RANDOM_SEED`: reproducible waypoints.
+- `SHOW_VIEWER`: set `True` for the interactive view.
+
+Note: Base displacements that push the world-frame target outside the arm workspace will report FAIL with a large position error. The Panda in its default configuration (`Q_INIT`) is near its reach boundary in the forward direction, so large negative-X base displacements are unreachable.
+
 ## Project Structure
 
 Implemented files are unmarked; planned files are marked `[planned]`. Empty directories exist locally but are not tracked by Git.
@@ -108,6 +127,7 @@ hybrid-rl-ik-control/
 ├── scripts/
 │   ├── mujoco/
 │   │   ├── track_targets.py
+│   │   ├── base_disturbance.py
 │   │   └── test_trajectory.py            [planned]
 │   ├── isaac/                            [planned]
 │   │   ├── test_ik.py

@@ -14,6 +14,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from hybrid_control.sim_interfaces.mujoco.adapter import MujocoRobotModel
+from hybrid_control.sim_interfaces.mujoco.modifier import MujocoModifier
 from hybrid_control.controllers.base import Controller
 from hybrid_control.controllers.ik_qp.controller import (
     IKQPConfig,
@@ -37,7 +38,7 @@ COM_MARKER_DIAMETER = 0.05  # metres; viewer-only marker, not part of the dynami
 # We drive the 7 arm joints directly by matching each MuJoCo joint with its corresponding actuator.
 JOINT_ACTUATOR_PAIRS = tuple((f"joint{i}", f"actuator{i}") for i in range(1, 8))
 N_DOFS = len(JOINT_ACTUATOR_PAIRS)
-FRAME_CONTROL = "hand"  # End-effector frame used for Cartesian tracking.
+FRAME_CONTROL = "grasp"  # End-effector frame used for Cartesian tracking.
 DT_CTRL = 0.02  # Requested controller period (s), rounded to whole physics steps.
 TRACKING_SECONDS = 5.0  # Simulated time spent tracking each target before validation.
 DQ_MAX = np.full(N_DOFS, 20.0)  # rad/s; conservative upper joint-rate bound.
@@ -70,6 +71,8 @@ ORIENTATION_TOLERANCE = 0.03  # radians
 VELOCITY_SLACK = 2e-3  # rad/s; accounts for OSQP solver tolerance.
 COMMAND_SLACK = 1e-4  # radians
 JOINT_SLACK = 1e-3  # radians; simulated actuator overshoot.
+
+_modifier = MujocoModifier(COM_MARKER_DIAMETER)
 
 
 # ==================================================================================================
@@ -116,26 +119,6 @@ def assert_within_limits(values, lower, upper, *, slack, label, context):
         for i in np.flatnonzero(invalid)
     )
     assert not np.any(invalid), f"{context}: {label}: {details}"
-
-
-def update_viewer_markers(handle, robot: RobotModel, target: PoseTarget):
-    """Draw the target pose and the current COM marker in the MuJoCo viewer."""
-    # Without a viewer, this is a no-op and the script remains headless.
-    if handle is None:
-        return
-    com = robot.get_com_state()
-    with handle.lock():
-        handle.user_scn.ngeom = 2
-        mujoco.mjv_initGeom(
-            handle.user_scn.geoms[0], mujoco.mjtGeom.mjGEOM_SPHERE,
-            np.full(3, 0.012), target.pose.position, np.eye(3).ravel(),
-            np.array([1, 0.2, 0.2, 0.7], dtype=np.float32),
-        )
-        mujoco.mjv_initGeom(
-            handle.user_scn.geoms[1], mujoco.mjtGeom.mjGEOM_SPHERE,
-            np.full(3, COM_MARKER_DIAMETER / 2), com.position, np.eye(3).ravel(),
-            np.array([0.2, 1, 0.3, 0.9], dtype=np.float32),
-        )
 
 
 def compute_checked_command(
@@ -204,7 +187,7 @@ def track_reference(
                 label="simulated position (rad)", context=step_context,
             )
         if handle is not None:
-            update_viewer_markers(handle, robot, target)
+            _modifier.update_overlay(handle, robot, target.pose)
             handle.sync()
             time.sleep(max(0.0, dt - (time.perf_counter() - started)))
     return data.time - start_time
@@ -300,7 +283,7 @@ def run_tracking(*, viewer=False, change_orientation=True):
             )
             context = f"{context}, {orientation_label}"
             print(f"{context}: {target.pose.position.round(4)} m")
-            update_viewer_markers(handle, robot, target)
+            _modifier.update_overlay(handle, robot, target.pose)
             elapsed = track_reference(robot, controller, target, handle, context)
             results.append(assert_tracking_error(
                 robot, target,

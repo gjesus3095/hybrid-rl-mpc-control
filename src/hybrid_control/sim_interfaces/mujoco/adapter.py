@@ -26,6 +26,7 @@ class MujocoRobotModel(RobotModel):
         joint_actuator_pairs: Sequence[tuple[str, str]],
         *,
         root_body: str | None = None,
+        base_actuator_names: Sequence[str] | None = None,
     ):
         """Initialize the adapter with the MuJoCo model, state, and selected joint-actuator pairs.
 
@@ -33,6 +34,9 @@ class MujocoRobotModel(RobotModel):
         are expected to operate as direct position servos. The constructor validates each
         pairing and precomputes the relevant MuJoCo index arrays used by later state and
         command operations.
+
+        ``base_actuator_names`` optionally registers additional actuators (e.g. base slide
+        servos) that are outside the IK. They can then be commanded via ``apply_base_command``.
         """
         pairs = tuple(joint_actuator_pairs)
         if not pairs or any(
@@ -80,6 +84,20 @@ class MujocoRobotModel(RobotModel):
         if self._root_body_id == 0 or model.body_subtreemass[self._root_body_id] <= 0:
             raise ValueError("Robot root must be a non-world body with positive subtree mass")
 
+        if base_actuator_names is not None:
+            names = tuple(base_actuator_names)
+            if not names or any(not isinstance(n, str) or not n for n in names):
+                raise ValueError("base_actuator_names must contain nonempty strings")
+            if len(set(names)) != len(names):
+                raise ValueError("base_actuator_names must be unique")
+            self._base_actuator_ids = np.array([
+                self._name_id(mujoco.mjtObj.mjOBJ_ACTUATOR, n) for n in names
+            ])
+            self._base_actuator_names = names
+        else:
+            self._base_actuator_ids = None
+            self._base_actuator_names = ()
+
     def _top_level_body(self, body_id: int) -> int:
         while self.model.body_parentid[body_id] != 0:
             body_id = int(self.model.body_parentid[body_id])
@@ -92,6 +110,7 @@ class MujocoRobotModel(RobotModel):
         joint_actuator_pairs: Sequence[tuple[str, str]],
         *,
         root_body: str | None = None,
+        base_actuator_names: Sequence[str] | None = None,
     ) -> "MujocoRobotModel":
         """Load a MuJoCo model from XML and create a model adapter around its scene state.
 
@@ -102,7 +121,10 @@ class MujocoRobotModel(RobotModel):
         model = mujoco.MjModel.from_xml_path(str(xml_path))
         data = mujoco.MjData(model)
         mujoco.mj_forward(model, data)
-        return cls(model, data, joint_actuator_pairs, root_body=root_body)
+        return cls(
+            model, data, joint_actuator_pairs,
+            root_body=root_body, base_actuator_names=base_actuator_names,
+        )
 
     def initialize(
         self,
@@ -251,3 +273,18 @@ class MujocoRobotModel(RobotModel):
         ):
             raise ValueError("Command positions must be finite and match the selected joints")
         self.data.ctrl[self._actuator_ids] = command.positions
+
+    def apply_base_command(self, positions: Sequence[float]) -> None:
+        """Write base actuator references in the order given at construction.
+
+        Requires ``base_actuator_names`` to have been set. Positions must be finite
+        and match the number of registered base actuators.
+        """
+        if self._base_actuator_ids is None:
+            raise RuntimeError("No base_actuator_names were registered at construction")
+        positions = np.asarray(positions, dtype=float)
+        if positions.shape != (len(self._base_actuator_ids),) or not np.all(np.isfinite(positions)):
+            raise ValueError(
+                f"base positions must be a finite vector of length {len(self._base_actuator_ids)}"
+            )
+        self.data.ctrl[self._base_actuator_ids] = positions

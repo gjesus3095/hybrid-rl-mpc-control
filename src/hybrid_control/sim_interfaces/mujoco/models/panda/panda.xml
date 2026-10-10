@@ -209,7 +209,7 @@
                     <geom mesh="link7_7" material="white" class="visual"/>
                     <geom mesh="link7_c" class="collision"/>
                     <body name="hand" pos="0 0 0.107" quat="0.9238795 0 0 -0.3826834">
-                     <site name="hand_frame" pos="0.0 0.0 0.0" quat="1 0 0 0" type="sphere" rgba="0 0 1 1" size="0.02" group="0" />
+<!--                     <site name="hand_frame" pos="0.0 0.0 0.0" quat="1 0 0 0" type="sphere" rgba="0 0 1 1" size="0.02" group="0" />-->
 <!--                     <site name="pick_frame" pos="0.0 0.0 0.0584" quat="1 0 0 0" type="sphere" rgba="0 0 1 1" size="0.02" group="0" />-->
                       <inertial mass="0.73" pos="-0.01 0 0.03" diaginertia="0.001 0.0025 0.0017"/>
                       <geom name= "hand_cover0" mesh="hand_0" material="off_white" class="visual"/>
@@ -242,6 +242,8 @@
                         <geom name ="finger_r4" class="fingertip_pad_collision_4"/>
                         <geom name ="finger_r5" class="fingertip_pad_collision_5"/>
                       </body>
+                      <body name="grasp" pos="0 0 0.07"/>
+                      <site name="grasp_site" pos="0.0 0.0 0.07" quat="1 0 0 0" type="sphere" rgba="0 0 1 1" size="0.02" group="0" />
                     </body>
                   </body>
                 </body>
