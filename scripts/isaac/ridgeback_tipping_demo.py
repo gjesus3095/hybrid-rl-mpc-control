@@ -55,6 +55,10 @@ parser.add_argument("--base_friction", type=float, default=0.0,
                     help="Platform-ground friction. 0 = ideal wheels (the velocity tracker supplies all traction).")
 parser.add_argument("--cmd", type=float, nargs=3, default=[0.0, 0.0, 0.0], metavar=("VX", "VY", "WZ"),
                     help="Base velocity command in the base frame, applied once the arm is stretched.")
+parser.add_argument("--drive", action="store_true",
+                    help="Nominal-pose driving test: the arm stays folded and the base follows a gentle schedule "
+                         "(forward, back, left, right, turn both ways). Ignores the reach and --cmd.")
+parser.add_argument("--drive_speed", type=float, default=0.3, help="--drive: base speed [m/s] and turn rate [rad/s].")
 parser.add_argument("--tau", type=float, default=0.15, help="Velocity tracking time constant [s].")
 parser.add_argument("--max_force", type=float, default=1000.0, help="Planar force limit [N] (stock base: 1000).")
 parser.add_argument("--settle", type=float, default=1.0, help="Seconds with the arm folded.")
@@ -209,7 +213,7 @@ def tilt(quat_xyzw: torch.Tensor) -> tuple[float, float, float]:
     return roll, pitch, yaw
 
 
-def overlay(frame, t: float, tipped: bool, com_offset: float, half_length: float):
+def overlay(frame, t: float, tipped: bool, com_offset: float, half_length: float, phase: str = ""):
     """Draw the configuration and status text into the corners of an RGB frame."""
     import numpy as np
     from PIL import Image, ImageDraw, ImageFont
@@ -239,6 +243,8 @@ def overlay(frame, t: float, tipped: bool, com_offset: float, half_length: float
     # bottom-left: time and status
     status, color = ("TIPPED", (255, 70, 70)) if tipped else ("STABLE", (120, 255, 120))
     draw.text((pad, h - pad), f"t = {t:4.1f} s   {status}", font=font, fill=color, anchor="ld", **kw)
+    if phase:  # driving phase, centred above the bottom edge
+        draw.text((w // 2, h - pad - 40), phase, font=font, fill=(255, 255, 255), anchor="mm", **kw)
     # bottom-right: the failure criterion
     ok = com_offset <= half_length
     draw.text((w - pad, h - pad), f"COM offset {com_offset:.3f} m / half-length {half_length:.3f} m",
@@ -293,6 +299,23 @@ def run(sim: SimulationContext, robot: Articulation, camera=None):
     t_swing, t_hold = args_cli.settle, args_cli.settle + args_cli.swing
     t_end = t_hold + args_cli.hold
     cmd = torch.tensor(args_cli.cmd, device=robot.device)
+    schedule = None
+    if args_cli.drive:
+        v, speed = args_cli.drive_speed, args_cli.drive_speed
+        # (duration [s], vx, vy, wz, description) in the base frame, as in ridgeback_demo.py
+        schedule = [
+            (2.0, 0.0, 0.0, 0.0, "standing still"),
+            (2.0, v, 0.0, 0.0, "driving forward (+x)"),
+            (2.0, -v, 0.0, 0.0, "driving backward (-x)"),
+            (2.0, 0.0, v, 0.0, "sliding left (+y)"),
+            (2.0, 0.0, -v, 0.0, "sliding right (-y)"),
+            (2.0, 0.0, 0.0, speed, "turning counter-clockwise"),
+            (2.0, 0.0, 0.0, -speed, "turning clockwise"),
+        ]
+        t_swing, t_hold = float("inf"), args_cli.settle  # arm stays in its nominal pose
+        t_end = t_hold + sum(phase[0] for phase in schedule)
+    phase_label, last_phase = "", None
+    max_tilt, max_ratio = 0.0, 0.0
     step = 0
     while True:
         t = step * dt
@@ -301,7 +324,7 @@ def run(sim: SimulationContext, robot: Articulation, camera=None):
         if tipped_at is not None and t - tipped_at > args_cli.post_tip:
             break
         # -- arm: fold -> stretched, smoothstep
-        s = min(max((t - t_swing) / max(args_cli.swing, 1e-6), 0.0), 1.0)
+        s = 0.0 if schedule else min(max((t - t_swing) / max(args_cli.swing, 1e-6), 0.0), 1.0)
         s = s * s * (3 - 2 * s)
         robot.actuators.target_command.set_position_index(value=q_fold + s * (q_str - q_fold), joint_ids=arm_ids)
         robot.actuators.target_command.set_position_index(
@@ -313,10 +336,23 @@ def run(sim: SimulationContext, robot: Articulation, camera=None):
         vel = robot.data.body_com_lin_vel_w.torch[0, base_id]
         ang = robot.data.body_com_ang_vel_w.torch[0, base_id]
         roll, pitch, yaw = tilt(robot.data.body_quat_w.torch[0, base_id])
+        base_x, base_y = robot.data.body_pos_w.torch[0, base_id, :2].tolist()
         driving = t >= t_hold
         c, sn = math.cos(yaw), math.sin(yaw)
         v_des = torch.zeros(3, device=robot.device)
         w_des = 0.0
+        if schedule and t >= t_hold:
+            elapsed = t_hold
+            for duration, vx, vy, wz, description in schedule:
+                if t < elapsed + duration or description == schedule[-1][4]:
+                    break
+                elapsed += duration
+            cmd = torch.tensor([vx, vy, wz], device=robot.device)
+            phase_label = description
+            if description != last_phase:
+                last_phase = description
+                print(f"[INFO] t={t:5.2f}s  base_link at x={base_x:+.2f} m, y={base_y:+.2f} m, yaw={yaw:+.2f} rad"
+                      f" -> {description}")
         if driving:
             v_des[0], v_des[1] = c * cmd[0] - sn * cmd[1], sn * cmd[0] + c * cmd[1]
             w_des = cmd[2].item()
@@ -349,6 +385,8 @@ def run(sim: SimulationContext, robot: Articulation, camera=None):
         dx, dy = c * rel[0] + sn * rel[1], -sn * rel[0] + c * rel[1]  # base-frame offsets
         com_offset = max(abs(dx.item()) / half_length, abs(dy.item()) / half_width) * half_length
         t = step * dt
+        max_tilt = max(max_tilt, abs(roll), abs(pitch))
+        max_ratio = max(max_ratio, com_offset / half_length)
         if left_at is None and com_offset > half_length:
             left_at = t
             print(f"[INFO] t={t:5.2f}s  total COM left the footprint (offset {com_offset:.3f} m > {half_length:.3f} m)")
@@ -365,11 +403,15 @@ def run(sim: SimulationContext, robot: Articulation, camera=None):
             camera.update(dt)
             if step % frame_interval == 0:
                 frame = camera.data.output["rgb"].torch[0, ..., :3].cpu().numpy().copy()
-                frames.append(overlay(frame, t, tipped_at is not None, com_offset, half_length))
+                frames.append(overlay(frame, t, tipped_at is not None, com_offset, half_length, phase_label))
 
     result = f"tipped={tipped_at is not None}" + (f" at t={tipped_at:.2f}s" if tipped_at is not None else "")
     result += f", com_left_footprint={left_at is not None}" + (f" at t={left_at:.2f}s" if left_at is not None else "")
     print(f"[RESULT] case={args_cli.case} {result}")
+    if schedule:
+        print(f"[RESULT] drive: max tilt {max_tilt:.3f} rad ({math.degrees(max_tilt):.1f} deg), "
+              f"max COM offset {max_ratio * half_length:.3f} m of {half_length:.3f} m half-length "
+              f"({100 * max_ratio:.0f}%), final base_link x={base_x:+.2f} m, y={base_y:+.2f} m, yaw={yaw:+.2f} rad")
     if frames:
         import imageio.v2 as imageio
 
