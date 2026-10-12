@@ -11,7 +11,7 @@ from scipy.spatial.transform import Rotation
 
 from hybrid_control.sim_interfaces.mujoco.adapter import MujocoRobotModel
 from hybrid_control.controllers.base import Controller
-from hybrid_control.controllers.ik_qp.controller import IKQPConfig, InverseKinematicsController, PoseTarget
+from hybrid_control.controllers.ik_qp.ik_qp_mujoco import IKQPConfig, InverseKinematicsController, PoseTarget
 from hybrid_control.robots.model import RobotModel
 from hybrid_control.robots.state import CenterOfMassState, JointPositionCommand, JointState, Pose
 

@@ -10,6 +10,7 @@ readme = "README.md"
 license-files = [
     "docs/licenses/hybrid_push_control_panda-LICENSE",
     "src/hybrid_control/sim_interfaces/mujoco/models/panda/LICENSE",
+    "docs/licenses/IsaacLab-LICENSE",
 ]
 requires-python = ">=3.10,<3.12"
 dependencies = [
@@ -22,7 +23,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-isaac = []
+isaac = [
+    "pin-pink",
+    "qpsolvers<4.9",  # 4.9+ needs osqp>=1.0; ik_qp_mujoco uses the osqp 0.6 API
+    "daqp==0.8.5",  # same pin as Isaac Lab (its pyproject: ">0.8.5 changes behavior")
+]
 
 [dependency-groups]
 test = ["pytest>=7,<9"]
@@ -36,6 +41,7 @@ namespaces = true
 "hybrid_control.sim_interfaces.mujoco.models.panda" = [
     "*.xml", "*.md", "*.png", "LICENSE", "assets/*.obj", "assets/*.stl",
 ]
+"hybrid_control.sim_interfaces.isaac.assets.franka" = ["*.urdf"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

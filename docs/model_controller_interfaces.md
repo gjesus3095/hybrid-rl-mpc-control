@@ -58,7 +58,7 @@ CoM is scoped to the robot's body subtree, excluding other objects in the scene.
 `InverseKinematicsController` takes a `PoseTarget` and returns a `JointPositionCommand`.
 
 ```python
-from hybrid_control.controllers.ik_qp.controller import (
+from hybrid_control.controllers.ik_qp.ik_qp_mujoco import (
     IKQPConfig, InverseKinematicsController, PoseTarget,
 )
 from hybrid_control.robots.state import Pose
@@ -76,6 +76,10 @@ robot.apply_command(command)               # writes actuator references
 ```
 
 The QP solves for joint velocities bounded by `velocity_lower`/`velocity_upper`, then integrates: `q_cmd = q_current + dq * dt`.
+
+### Pink IK/QP controller (Isaac Lab assets)
+
+`PinkInverseKinematicsController` in `controllers/ik_qp/ik_qp.py` takes the same `IKQPConfig` and `PoseTarget` and solves the same QP with Pink, using kinematics from Isaac Lab's Franka URDF instead of `robot.get_jacobian`. The `RobotModel` must use the URDF names (`panda_joint1..7`, frames such as `panda_link0`, `panda_hand`). Targets are world-frame and re-expressed relative to `panda_link0`, so a moving base is handled. Requires `uv sync --extra isaac`.
 
 ## Running tests and the tracking experiment
 

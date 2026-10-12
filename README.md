@@ -11,14 +11,14 @@ The long-term goal is to extend this architecture to **humanoid whole-body contr
 The Panda model and controller were imported from `../hybrid_push_control_panda`:
 
 - [Panda model](src/hybrid_control/sim_interfaces/mujoco/models/panda/panda.xml) and [simulation scene](src/hybrid_control/sim_interfaces/mujoco/models/panda/scene.xml), including robot meshes and model variants. The scene includes a ground plane at world Z = 0 with a repeating grid texture. Tables, loose objects, and furniture textures have been removed.
-- [IK/QP controller](src/hybrid_control/controllers/ik_qp/controller.py), including its admittance and low-pass filters.
+- [IK/QP controller](src/hybrid_control/controllers/ik_qp/ik_qp_mujoco.py), including its admittance and low-pass filters.
 - [Math helpers](src/hybrid_control/utils/math_helpers.py) required by the controller.
 
 The controller computes commands through a simulator-independent `RobotModel` interface. `MujocoRobotModel` wraps an existing simulation using explicit joint-to-actuator mappings, and the generic `Controller` base supports future controllers. See [model and controller interfaces](docs/model_controller_interfaces.md) for conventions and usage.
 
 ## Setup
 
-Use Python 3.10 or 3.11. Test dependencies (`pytest`) are in a dependency group and are included by default with `uv sync`. Isaac Sim dependencies will be added to the `isaac` extra later.
+Use Python 3.10 or 3.11. Test dependencies (`pytest`) are in a dependency group and are included by default with `uv sync`. The Pink IK/QP controller (`controllers/ik_qp/ik_qp.py`) needs the `isaac` extra: `uv sync --extra isaac`. It uses a temporary copy of Isaac Lab's Franka URDF until the Isaac Lab 3 (Python 3.12) requirement is resolved. Solvers `osqp` and `daqp` are supported; see [IK/QP with Pink](docs/ik_qp_pink.md) for the comparison and open items.
 
 ```bash
 uv sync

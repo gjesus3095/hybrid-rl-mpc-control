@@ -27,7 +27,10 @@ Hybrid controller for a 3-DoF planar mobile base (RL) + 7-DoF Franka Panda arm (
 - `src/hybrid_control/robots/state.py` — `JointState`, `CenterOfMassState`, `Pose` (xyzw quat), `JointPositionCommand`; all validate on construction
 - `src/hybrid_control/sim_interfaces/mujoco/adapter.py` — `MujocoRobotModel`: wraps `MjModel`/`MjData` with `joint_actuator_pairs`; exposes `from_xml_path` + `initialize`
 - `src/hybrid_control/controllers/base.py` — `Controller[TargetT, CommandT]` ABC: `compute(target, dt)`, `reset()`
-- `src/hybrid_control/controllers/ik_qp/controller.py` — `InverseKinematicsController(robot, IKQPConfig)` with `PoseTarget`; QP-based velocity solver integrates to position command
+- `src/hybrid_control/controllers/ik_qp/config.py` — `PoseTarget`, `IKQPConfig` shared by both IK/QP controllers
+- `src/hybrid_control/controllers/ik_qp/ik_qp_mujoco.py` — `InverseKinematicsController(robot, IKQPConfig)`; QP (OSQP) on the robot's Jacobian, integrates to position command
+- `src/hybrid_control/controllers/ik_qp/ik_qp.py` — `PinkInverseKinematicsController(robot, IKQPConfig)`; same QP solved with Pink on the Isaac Lab Franka URDF (Isaac Lab joint/frame names, `uv sync --extra isaac`)
+- `src/hybrid_control/sim_interfaces/isaac/assets/franka/lula_franka_gen.urdf` — temporary copy of Isaac Lab's Franka URDF (see `ik_qp.py` docstring)
 - `src/hybrid_control/utils/math_helpers.py` — math utilities for kinematics
 - `src/hybrid_control/sim_interfaces/mujoco/models/panda/` — Panda XML model + meshes
 
