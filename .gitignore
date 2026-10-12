@@ -5,3 +5,18 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+
+# Isaac Lab outputs
+logs/
+outputs/
+*.pt
+*.onnx
+
+# Media (keep large recordings out of git)
+*.mp4
+*.mov
+*.gif
+
+# Editor / machine-specific
+.vscode/settings.json
+.idea/
