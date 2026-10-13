@@ -141,6 +141,8 @@ Run command (from the Isaac Lab folder), see the script docstring:
 
 ## 4. RL training pipeline (base policy + IK/QP arm)
 
+Quick commands to train, watch and evaluate: [training_cheatsheet.md](training_cheatsheet.md).
+
 The RL base policy trains in `RidgebackDREnv` with the existing IK/QP controller driving the arm in the loop.
 
 ```
