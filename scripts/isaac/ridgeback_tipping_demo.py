@@ -24,10 +24,11 @@ preset (see ``CASES``); individual flags override the preset.
 Usage (from the Isaac Lab folder; add ``--extra video`` and ``--video`` to record):
 
     uv run --extra isaacsim --extra video python ~/hybrid-rl-mpc-control/scripts/isaac/ridgeback_tipping_demo.py \
-        --case small_light --video --video_path out/small_light.mp4
+        --case small_light --video
 """
 
 import argparse
+from pathlib import Path
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
@@ -44,6 +45,7 @@ CASES = {
     "with_payload": ((0.29, 0.29), 20.0, 3.0),  # the 3 kg payload alone makes it tip
 }
 
+OUT_DIR = Path(__file__).resolve().parents[2] / "out"  # <repo>/out, not the Isaac Lab folder
 parser = argparse.ArgumentParser(description="Tip-over experiment with a free Ridgeback-Franka base.")
 parser.add_argument("--case", choices=sorted(CASES), default=None, help="Preset footprint / base mass / payload.")
 parser.add_argument("--footprint", type=float, nargs=2, default=None, metavar=("L", "W"),
@@ -66,7 +68,7 @@ parser.add_argument("--swing", type=float, default=3.0, help="Seconds to move th
 parser.add_argument("--hold", type=float, default=2.0, help="Seconds held stretched (driving if --cmd is nonzero).")
 parser.add_argument("--post_tip", type=float, default=2.0, help="Seconds to keep recording after the tip.")
 parser.add_argument("--video", action="store_true", help="Record offscreen to an mp4.")
-parser.add_argument("--video_path", type=str, default="ridgeback_tipping.mp4")
+parser.add_argument("--video_path", type=str, default=str(OUT_DIR / "ridgeback_tipping.mp4"), help="Default: <repo>/out/.")
 parser.add_argument("--video_fps", type=int, default=30)
 add_launcher_args(parser)
 args_cli = parser.parse_args()
@@ -86,86 +88,20 @@ import warp as wp
 import isaaclab.sim as sim_utils
 from isaaclab.assets import Articulation
 from isaaclab.sim import SimulationContext
-from isaaclab.utils import clone
 
-from isaaclab_physx.sim.spawners.materials import PhysxRigidBodyMaterialCfg
-from isaaclab_assets.robots.ridgeback_franka import RIDGEBACK_FRANKA_PANDA_CFG  # isort:skip
+from hybrid_control.sim_interfaces.isaac.ridgeback.params import BaseParams
+from hybrid_control.sim_interfaces.isaac.ridgeback.robot import (
+    MOUNT_X, PANDA_RATED_PAYLOAD, Q_STRETCHED, STOCK_HEIGHT, MassModel, build_robot_cfg, free_and_resize_base, tilt,
+)
 
-STOCK_FOOTPRINT = (0.9325, 0.7900)  # base collision size in x, y [m] (centred on the base frame)
-STOCK_HEIGHT = 0.28  # top plate height [m]; the arm mounts here
-MOUNT_X = 0.30  # arm mount ahead of the base frame [m]; the footprint is centred here
-TCP_Z = 0.1034  # TCP distance along the hand z axis [m]
-PANDA_RATED_PAYLOAD = 3.0  # [kg]
-Q_STRETCHED = {"panda_joint2": 1.5, "panda_joint4": -0.1, "panda_joint6": 1.6}
+PARAMS = BaseParams(
+    footprint=tuple(args_cli.footprint), base_mass=args_cli.base_mass, base_com_z=args_cli.base_com_z,
+    payload=args_cli.payload,
+)
+
 TIP_ANGLE = 0.5  # roll/pitch [rad] beyond which the robot counts as tipped
 # COM sphere colours (RGB): platform, arm, total
 COM_MARKERS = {"platform": ((0.1, 0.4, 1.0), 0.045), "arm": ((0.1, 0.9, 0.2), 0.045), "total": ((1.0, 0.1, 0.1), 0.055)}
-
-
-def build_robot_cfg():
-    """Stock config minus the dummy-joint base drive."""
-    cfg = clone(RIDGEBACK_FRANKA_PANDA_CFG)
-    cfg.prim_path = "/World/Robot"
-    cfg.actuators.pop("base")  # the dummy joints no longer exist
-    for name in [k for k in cfg.init_state.joint_pos if k.startswith("dummy")]:
-        cfg.init_state.joint_pos.pop(name)
-    cfg.init_state.pos = (0.0, 0.0, 0.01)
-    cfg.articulation_root_prim_path = "/base_link"  # the free root, see free_and_resize_base()
-    cfg.spawn.mass_props = {"/base_link": [sim_utils.MassCfg(mass=args_cli.base_mass)]}
-    return cfg
-
-
-def free_and_resize_base(prim_path: str, footprint: tuple[float, float]):
-    """Deactivate the dummy world anchor, re-shape the platform under the arm mount, set its material."""
-    from pxr import Gf, UsdGeom
-
-    stage = sim_utils.get_current_stage()
-    for name in ("world", "dummy_base_x", "dummy_base_y"):
-        stage.GetPrimAtPath(f"{prim_path}/{name}").SetActive(False)
-    # Make base_link the articulation root. Left on the parent Xform, PhysX would pick an arbitrary link
-    # as the floating root, so root-pose writes would move the wrong body.
-    from pxr import PhysxSchema, UsdPhysics
-
-    stage.GetPrimAtPath(prim_path).RemoveAPI(UsdPhysics.ArticulationRootAPI)
-    base_prim = stage.GetPrimAtPath(f"{prim_path}/base_link")
-    UsdPhysics.ArticulationRootAPI.Apply(base_prim)
-    PhysxSchema.PhysxArticulationAPI.Apply(base_prim).CreateEnabledSelfCollisionsAttr(False)
-    scale = (footprint[0] / STOCK_FOOTPRINT[0], footprint[1] / STOCK_FOOTPRINT[1], 1.0)
-    for child in stage.GetPrimAtPath(f"{prim_path}/base_link").GetChildren():
-        if child.GetName() not in ("visuals", "collisions"):
-            continue
-        # Untyped prims ignore transform ops, so type them first. Order: scale about the stock
-        # centre, then translate the footprint under the arm mount.
-        if not child.GetTypeName():
-            child.SetTypeName("Xform")
-        xform = UsdGeom.Xformable(child)
-        xform.AddTranslateOp().Set(Gf.Vec3d(MOUNT_X, 0.0, 0.0))
-        xform.AddScaleOp().Set(Gf.Vec3f(*scale))
-        if child.GetName() == "visuals":
-            UsdGeom.Imageable(child).MakeInvisible()  # replaced by the translucent box below
-
-    # The stock laser scanners (0.13 kg each) sit at the stock corners, outside a smaller footprint, so they
-    # would float in the air. Hide their visuals; their small masses stay in the platform model.
-    for name in ("front_laser", "rear_laser"):
-        UsdGeom.Imageable(stage.GetPrimAtPath(f"{prim_path}/{name}")).MakeInvisible()
-
-    # Translucent platform box (visual only): shows the footprint and lets the COM spheres show through.
-    box = sim_utils.CuboidCfg(
-        size=(footprint[0], footprint[1], STOCK_HEIGHT),
-        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.6, 0.65, 0.75), opacity=0.3, roughness=0.6),
-    )
-    box.func(f"{prim_path}/base_link/platform_visual", box, translation=(MOUNT_X, 0.0, STOCK_HEIGHT / 2))
-
-    # A free box would slide with Coulomb friction (stalling the velocity tracker at ~mu*g*t). Use a
-    # low-friction platform material; "min" outranks the ground's default "average" combine mode.
-    material = f"{prim_path}/platform_material"
-    sim_utils.spawn_rigid_body_material(
-        material,
-        PhysxRigidBodyMaterialCfg(
-            static_friction=args_cli.base_friction, dynamic_friction=args_cli.base_friction, friction_combine_mode="min"
-        ),
-    )
-    sim_utils.bind_physics_material(f"{prim_path}/base_link/collisions", material)
 
 
 def spawn_com_markers():
@@ -180,37 +116,11 @@ def spawn_com_markers():
         cfg.func(f"/World/Markers/com_{name}", cfg, translation=(0.0, 0.0, 3.0))
 
 
-def apply_mass_model(robot: Articulation, base_id: int, hand_id: int):
-    """Box COM/inertia for the platform and a point payload at the TCP. The arm itself is untouched."""
-    length, width = args_cli.footprint
-    mass, height = args_cli.base_mass, STOCK_HEIGHT
-    com_pos = robot.data.body_com_pos_b.torch.clone()
-    com_quat = robot.data.body_com_quat_b.torch.clone()
-    com_pos[:, base_id] = torch.tensor([MOUNT_X, 0.0, args_cli.base_com_z], device=robot.device)
-    inertia = robot.data.body_inertia.torch.clone()
-    inertia[:, base_id] = 0.0
-    inertia[:, base_id, 0] = mass * (width**2 + height**2) / 12.0
-    inertia[:, base_id, 4] = mass * (length**2 + height**2) / 12.0
-    inertia[:, base_id, 8] = mass * (length**2 + width**2) / 12.0
-    masses = robot.data.body_mass.torch.clone()
-    if args_cli.payload > 0.0:
-        m_hand = masses[:, hand_id]
-        total = m_hand + args_cli.payload
-        com_pos[:, hand_id, 2] = (com_pos[:, hand_id, 2] * m_hand + TCP_Z * args_cli.payload) / total
-        inertia[:, hand_id] += torch.eye(3, device=robot.device).flatten() * 1e-3 * args_cli.payload
-        masses[:, hand_id] = total
-    robot.set_masses_index(masses=masses, full_data=True)
-    robot.set_coms_index(coms=torch.cat([com_pos, com_quat], dim=-1))
-    robot.set_inertias_index(inertias=inertia)
-
-
-def tilt(quat_xyzw: torch.Tensor) -> tuple[float, float, float]:
-    """Return (roll, pitch, yaw) [rad] of an xyzw quaternion (Isaac Lab 3.0 order)."""
-    x, y, z, w = quat_xyzw.tolist()
-    roll = math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
-    pitch = math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x))))
-    yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
-    return roll, pitch, yaw
+def apply_mass_model(robot: Articulation):
+    """Box COM/inertia for the platform and a point payload at the TCP (arm untouched), via the shared MassModel."""
+    model = MassModel(robot)
+    model.set_params([PARAMS])
+    return model.base_id, model.hand_id
 
 
 def overlay(frame, t: float, tipped: bool, com_offset: float, half_length: float, phase: str = ""):
@@ -275,7 +185,7 @@ def run(sim: SimulationContext, robot: Articulation, camera=None):
     robot.write_joint_velocity_to_sim_index(velocity=robot.data.default_joint_vel.torch.clone())
     robot.reset()
 
-    apply_mass_model(robot, base_id, hand_id)
+    apply_mass_model(robot)
     masses = robot.data.body_mass.torch[0].clone()
     mass_total = masses.sum().item()
     mass_arm = masses[arm_body_ids].sum().item()
@@ -335,7 +245,7 @@ def run(sim: SimulationContext, robot: Articulation, camera=None):
         pos = robot.data.body_com_pos_w.torch[0, base_id]
         vel = robot.data.body_com_lin_vel_w.torch[0, base_id]
         ang = robot.data.body_com_ang_vel_w.torch[0, base_id]
-        roll, pitch, yaw = tilt(robot.data.body_quat_w.torch[0, base_id])
+        roll, pitch, yaw = (a.item() for a in tilt(robot.data.body_quat_w.torch[0, base_id][None]))
         base_x, base_y = robot.data.body_pos_w.torch[0, base_id, :2].tolist()
         driving = t >= t_hold
         c, sn = math.cos(yaw), math.sin(yaw)
@@ -415,6 +325,7 @@ def run(sim: SimulationContext, robot: Articulation, camera=None):
     if frames:
         import imageio.v2 as imageio
 
+        Path(args_cli.video_path).parent.mkdir(parents=True, exist_ok=True)
         imageio.mimsave(args_cli.video_path, frames, fps=args_cli.video_fps)
         print(f"[INFO] Saved {len(frames)} frames to {args_cli.video_path}")
 
@@ -429,8 +340,8 @@ def main():
         light = sim_utils.DistantLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75))
         light.func("/World/Light", light)
 
-        robot = Articulation(cfg=build_robot_cfg())  # spawns the USD
-        free_and_resize_base("/World/Robot", tuple(args_cli.footprint))
+        robot = Articulation(cfg=build_robot_cfg("/World/Robot", args_cli.base_mass))  # spawns the USD
+        free_and_resize_base("/World/Robot", tuple(args_cli.footprint), args_cli.base_friction)
 
         camera = None
         if args_cli.video:
