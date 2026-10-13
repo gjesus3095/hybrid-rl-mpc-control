@@ -42,24 +42,32 @@ class BaseParams:
 
 @dataclass(frozen=True)
 class DomainRandomization:
-    """Uniform sampling ranges ``(low, high)`` for ``BaseParams``.
+    """Sampling ranges ``(low, high)`` for ``BaseParams``, skewed toward the hard end by ``hard_bias``.
 
-    The defaults span the cases tested with the tipping demo: from platforms that tip as soon as the arm
-    reaches out (small, light) to ones that stay upright over the whole workspace (large, heavy).
+    Hard = small, light platform and heavy payload. With ``hard_bias`` b > 1 the platform size and mass are drawn as
+    ``low + (high - low) * u**b`` and the payload as ``high - (high - low) * u**b`` (u uniform in [0, 1]), so easy
+    (large, heavy) platforms are rare; b = 1 is uniform. The platform COM height is fixed by default.
     """
 
-    length: tuple[float, float] = (0.25, 0.60)
-    width: tuple[float, float] = (0.25, 0.60)
-    base_mass: tuple[float, float] = (8.0, 45.0)
-    base_com_z: tuple[float, float] = (0.06, 0.14)
-    payload: tuple[float, float] = (0.0, 3.0)
+    length: tuple[float, float] = (0.19, 0.52)
+    width: tuple[float, float] = (0.19, 0.52)
+    base_mass: tuple[float, float] = (5.5, 38.0)
+    base_com_z: tuple[float, float] = (0.10, 0.10)
+    payload: tuple[float, float] = (0.8, 3.0)
+    hard_bias: float = 2.2
+
+    def _low(self, rng: random.Random, bounds: tuple[float, float]) -> float:
+        return bounds[0] + (bounds[1] - bounds[0]) * rng.random() ** self.hard_bias
+
+    def _high(self, rng: random.Random, bounds: tuple[float, float]) -> float:
+        return bounds[1] - (bounds[1] - bounds[0]) * rng.random() ** self.hard_bias
 
     def sample(self, rng: random.Random) -> BaseParams:
         return BaseParams(
-            footprint=(rng.uniform(*self.length), rng.uniform(*self.width)),
-            base_mass=rng.uniform(*self.base_mass),
+            footprint=(self._low(rng, self.length), self._low(rng, self.width)),
+            base_mass=self._low(rng, self.base_mass),
             base_com_z=rng.uniform(*self.base_com_z),
-            payload=rng.uniform(*self.payload),
+            payload=self._high(rng, self.payload),
         )
 
     def sample_many(self, n: int, seed: int | None = None) -> list[BaseParams]:

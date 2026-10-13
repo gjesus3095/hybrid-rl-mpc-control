@@ -70,17 +70,17 @@ def free_and_resize_base(prim_path: str, footprint: tuple[float, float], frictio
         xform.AddTranslateOp().Set(Gf.Vec3d(MOUNT_X, 0.0, 0.0))
         xform.AddScaleOp().Set(Gf.Vec3f(*scale))
         if child.GetName() == "visuals":
-            UsdGeom.Imageable(child).MakeInvisible()  # replaced by the translucent box below
+            UsdGeom.Imageable(child).MakeInvisible()  # replaced by the platform box below
 
     # The stock laser scanners (0.13 kg each) sit at the stock corners, outside a smaller footprint, so they
     # would float in the air. Hide their visuals; their small masses stay in the platform model.
     for name in ("front_laser", "rear_laser"):
         UsdGeom.Imageable(stage.GetPrimAtPath(f"{prim_path}/{name}")).MakeInvisible()
 
-    # Translucent platform box (visual only): shows the footprint and lets the COM spheres show through.
+    # Opaque platform box (visual only): shows the footprint.
     box = sim_utils.CuboidCfg(
         size=(footprint[0], footprint[1], STOCK_HEIGHT),
-        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.6, 0.65, 0.75), opacity=0.3, roughness=0.6),
+        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.35, 0.40, 0.50), roughness=0.5, metallic=0.2),
     )
     box.func(f"{prim_path}/base_link/platform_visual", box, translation=(MOUNT_X, 0.0, STOCK_HEIGHT / 2))
 
@@ -110,28 +110,32 @@ class MassModel:
         self._com_quat = robot.data.body_com_quat_b.torch.clone()
         self._inertia = robot.data.body_inertia.torch.clone()
 
-    def set_params(self, params: list[BaseParams]):
-        """Write the mass model of every env (``len(params) == num_instances``)."""
+    def set_params(self, params: list[BaseParams], env_ids: torch.Tensor | None = None):
+        """Write the mass model of ``env_ids`` (all envs if None); ``params[k]`` belongs to ``env_ids[k]``."""
         device = self.robot.device
-        masses, com_pos, inertia = self._masses.clone(), self._com_pos.clone(), self._inertia.clone()
-        for i, p in enumerate(params):
+        ids = torch.arange(self.robot.num_instances, device=device) if env_ids is None else env_ids.to(device).long()
+        if len(params) != len(ids):
+            raise ValueError(f"got {len(params)} params for {len(ids)} envs")
+        masses, com_pos, inertia = self._masses[ids].clone(), self._com_pos[ids].clone(), self._inertia[ids].clone()
+        for k, p in enumerate(params):
             length, width = p.footprint
             m, h = p.base_mass, STOCK_HEIGHT
-            masses[i, self.base_id] = m
-            com_pos[i, self.base_id] = torch.tensor([MOUNT_X, 0.0, p.base_com_z], device=device)
-            inertia[i, self.base_id] = 0.0
-            inertia[i, self.base_id, 0] = m * (width**2 + h**2) / 12.0
-            inertia[i, self.base_id, 4] = m * (length**2 + h**2) / 12.0
-            inertia[i, self.base_id, 8] = m * (length**2 + width**2) / 12.0
+            masses[k, self.base_id] = m
+            com_pos[k, self.base_id] = torch.tensor([MOUNT_X, 0.0, p.base_com_z], device=device)
+            inertia[k, self.base_id] = 0.0
+            inertia[k, self.base_id, 0] = m * (width**2 + h**2) / 12.0
+            inertia[k, self.base_id, 4] = m * (length**2 + h**2) / 12.0
+            inertia[k, self.base_id, 8] = m * (length**2 + width**2) / 12.0
             if p.payload > 0.0:
-                m_hand = masses[i, self.hand_id].clone()
+                m_hand = masses[k, self.hand_id].clone()
                 total = m_hand + p.payload
-                com_pos[i, self.hand_id, 2] = (com_pos[i, self.hand_id, 2] * m_hand + TCP_Z * p.payload) / total
-                inertia[i, self.hand_id] += torch.eye(3, device=device).flatten() * 1e-3 * p.payload
-                masses[i, self.hand_id] = total
-        self.robot.set_masses_index(masses=masses, full_data=True)
-        self.robot.set_coms_index(coms=torch.cat([com_pos, self._com_quat], dim=-1))
-        self.robot.set_inertias_index(inertias=inertia)
+                com_pos[k, self.hand_id, 2] = (com_pos[k, self.hand_id, 2] * m_hand + TCP_Z * p.payload) / total
+                inertia[k, self.hand_id] += torch.eye(3, device=device).flatten() * 1e-3 * p.payload
+                masses[k, self.hand_id] = total
+        env_ids = ids.to(torch.int32)
+        self.robot.set_masses_index(masses=masses, env_ids=env_ids)
+        self.robot.set_coms_index(coms=torch.cat([com_pos, self._com_quat[ids]], dim=-1), env_ids=env_ids)
+        self.robot.set_inertias_index(inertias=inertia, env_ids=env_ids)
 
 
 def tilt(quat_xyzw: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:

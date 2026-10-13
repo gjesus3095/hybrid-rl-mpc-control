@@ -139,9 +139,54 @@ Run command (from the Isaac Lab folder), see the script docstring:
 
 ---
 
-## 4. What is missing to get the hybrid controller
+## 4. RL training pipeline (base policy + IK/QP arm)
 
-1. **Isaac `RobotModel` adapter** (batched or per-env) so `InverseKinematicsController` can drive the arm in `RidgebackDREnv`. Note the IK controller is currently single-robot NumPy; the env is batched torch.
-2. **Arm compensation for base motion**: the IK target must stay in the world frame while the base moves (already demonstrated in MuJoCo by `base_disturbance.py`).
-3. **RL policy + observation/reward**: observations from `env` (base velocity, `com_offset`, arm configuration), action = `base_cmd`, reward/termination from `tipped` / `left_footprint`. No `step → (obs, reward, done)` wrapper exists yet; `RidgebackDREnv` has no partial/per-env reset either (only a full `reset()`).
-4. **`integration/hybrid_controller.py`** tying 1-3 together.
+The RL base policy trains in `RidgebackDREnv` with the existing IK/QP controller driving the arm in the loop.
+
+```
+RidgebackDREnv (batched, DR)  <--  BaseStabilizationEnv (rl/env.py, RSL-RL VecEnv)  <--  OnPolicyRunner (PPO)
+   per-env partial reset            policy action (vx, vy, wz) held for `decimation` physics steps
+   dynamics re-sampled at reset     every `ik_every` steps: one InverseKinematicsController.compute per env, solved in
+                                    parallel worker processes (rl/qp_pool.py); ArmBatch/IsaacArmModel = RobotModel view
+                                    of each env's arm, world frame
+```
+
+| File | Role |
+|---|---|
+| `rl/env.py` | `BaseStabilizationEnv` + `StabilizationEnvCfg`/`IKCfg`: decimation, QP loop, resets, logging |
+| `rl/qp_pool.py`, `rl/qp_worker.py` | Worker-process pool for the per-env QPs (shared memory; same controller, same results) |
+| `rl/observations.py` | `observe(Snapshot)` -> actor/critic obs (base frame, reference lookahead, total COM, params) |
+| `rl/rewards.py` | `RewardCfg`, `compute_rewards`: COM centred, near/toward the trajectory, motion penalties, termination |
+| `rl/trajectories.py` | World-frame random reference trajectories (fixed points + Lissajous), reachable from the spawn pose |
+| `rl/config.py` | RSL-RL PPO runner config (dict) |
+| `isaac/ridgeback/arm_model.py` | `ArmBatch` (one GPU->CPU snapshot per QP tick) and `IsaacArmModel(RobotModel)` per env |
+| `isaac/ridgeback/viz.py` | COM markers (arm, total + plate projection), reference path/target markers, overlays |
+| `scripts/isaac/train_base_policy.py` | Training entry point; TensorBoard logs in `<repo>/logs/base_policy/<run>/` |
+| `scripts/isaac/play_base_policy.py` | Deterministic evaluation (failures, COM offset, base-motion statistics; `--zero_policy` baseline) |
+| `scripts/isaac/compare_policies_video.py` | Side-by-side video of two checkpoints on identical scenarios, with live CoM-offset bars |
+| `scripts/isaac/record_episodes_video.py` | One video of several completely different episodes (own platform each) for one checkpoint; `--mode sampled` shows an untrained policy with exploration noise |
+| `scripts/isaac/check_stabilization_env.py` | Integration checks: Jacobian, static-base QP tracking, partial reset, throughput |
+| `scripts/plot_reference_trajectories.py` | Plot of sampled reference trajectories with the arm's reach limits |
+
+Design decisions worth knowing:
+
+- **The QP is unaware of the base.** Targets are world-frame, so base motion appears as tracking error that the QP corrects.
+- **Every reference is reachable from the spawn pose** (within 0.78 m of the shoulder, outside 0.30 m, above 0.35 m, directions +-150 degrees around forward: 49/51% left/right, 61/39% in front/behind), so the QP alone can track it; the base only has to keep the platform stable.
+- **Reward:** CoM centred over the footprint (main term), tilt penalty, termination penalty; closeness to the trajectory centre plus potential-based progress toward it (no reward for circling); a modest end-effector tracking term (the QP tracks, but the base can disturb it), and penalties on measured base speed, yaw rate, yaw drift and jerky actions so corrections are slow and smooth. Weights are in `RewardCfg`; every term is logged as `Episode_Reward/<term>`.
+- **Arm gravity compensation is on** (`StabilizationEnvCfg.gravity_compensation`): the Isaac arm is a PD actuator (stiffness 800) and sags under gravity (~0.13 m error); the real Franka compensates gravity internally.
+- **QP gain 25/s** (`IKCfg.kp_pos`): the QP is P-only, so a moving reference lags by speed / gain.
+- **Position-only QP task by default** (`IKCfg.track_orientation=False`): the QP weights only scale the desired twist, not the Jacobian rows, so any orientation row constrains the arm even at weight 0; the adapter zeroes the angular rows.
+- **Domain randomization is skewed to hard cases** (`DomainRandomization.hard_bias`): small, light platforms and heavy payloads; platform COM height is fixed. With these settings a static base (zero command) fails about 59% of episodes (measured), the trained policy about 0.5%. The footprint is fixed per env slot (baked into the USD at spawn); mass and payload are re-sampled at every reset.
+- **Rendering quirk:** in the video setups one robot's mesh (the first one in a view) is sometimes not drawn although its physics and COM markers are fine; cause not found. `compare_policies_video.py` puts an unused dummy env at index 0 and does not rely on a particular env.
+
+Run (from the Isaac Lab folder):
+`PYTHONPATH=~/hybrid-rl-mpc-control/src .venv/bin/python ~/hybrid-rl-mpc-control/scripts/isaac/train_base_policy.py --num_envs 256 --qp_workers 48 --max_iterations 300`
+and `.venv/bin/tensorboard --logdir ~/hybrid-rl-mpc-control/logs/base_policy` for the logs.
+
+---
+
+## 5. Still missing
+
+1. **Arm compensation for base motion in the hybrid demo** (`integration/hybrid_controller.py`): load a trained policy and run it with the QP outside the training wrapper.
+2. **Larger/faster training**: more envs, automatic difficulty/DR curriculum.
+3. **Sim-to-real extras**: observation noise, actuator randomization.

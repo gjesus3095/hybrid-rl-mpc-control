@@ -24,3 +24,16 @@ def test_with_dynamics_keeps_geometry():
 def test_invalid_params_rejected():
     with pytest.raises(ValueError):
         BaseParams(base_mass=0.0)
+
+
+def test_hard_bias_skews_toward_small_light_platforms_and_heavy_payloads():
+    uniform = DomainRandomization(hard_bias=1.0).sample_many(2000, seed=0)
+    hard = DomainRandomization(hard_bias=2.5).sample_many(2000, seed=0)
+    mean = lambda ps, f: sum(f(p) for p in ps) / len(ps)  # noqa: E731
+    assert mean(hard, lambda p: p.footprint[0]) < mean(uniform, lambda p: p.footprint[0])
+    assert mean(hard, lambda p: p.base_mass) < mean(uniform, lambda p: p.base_mass)
+    assert mean(hard, lambda p: p.payload) > mean(uniform, lambda p: p.payload)
+
+
+def test_com_height_is_fixed_by_default():
+    assert len({p.base_com_z for p in DomainRandomization().sample_many(20, seed=1)}) == 1
