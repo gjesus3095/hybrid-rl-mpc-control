@@ -6,8 +6,10 @@ from os import PathLike
 import mujoco
 import numpy as np
 
-from hybrid_control.robots.model import RobotModel
-from hybrid_control.robots.state import CenterOfMassState, JointPositionCommand, JointState, Pose
+from hybrid_control.robots.model import RobotModel, TorqueRobotModel
+from hybrid_control.robots.state import (
+    CenterOfMassState, JointPositionCommand, JointState, JointTorqueCommand, Pose,
+)
 
 
 class MujocoRobotModel(RobotModel):
@@ -59,7 +61,7 @@ class MujocoRobotModel(RobotModel):
             self._name_id(mujoco.mjtObj.mjOBJ_ACTUATOR, name) for name in actuator_names
         ])
         for joint_id, actuator_id in zip(joint_ids, self._actuator_ids):
-            self._validate_position_servo(joint_id, actuator_id)
+            self._validate_actuator(joint_id, actuator_id)
 
         self._qpos_indices = model.jnt_qposadr[joint_ids].copy()
         self._dof_indices = model.jnt_dofadr[joint_ids].copy()
@@ -147,7 +149,7 @@ class MujocoRobotModel(RobotModel):
         qpos_indices = list(self._qpos_indices)
         dof_indices = list(self._dof_indices)
         joint_values = list(command.positions)
-        controls = dict(zip(self._actuator_ids, command.positions))
+        controls = dict(zip(self._actuator_ids, self._initial_controls(command.positions)))
 
         for name, value in (extra_joint_positions or {}).items():
             joint_id = self._name_id(mujoco.mjtObj.mjOBJ_JOINT, name)
@@ -191,8 +193,16 @@ class MujocoRobotModel(RobotModel):
             raise ValueError(f"Unknown {kind.name}: {name!r}")
         return index
 
-    def _validate_position_servo(self, joint_id: int, actuator_id: int) -> None:
-        """Ensure a selected joint-actuator pairing behaves like a direct position servo."""
+    def _initial_controls(self, positions: np.ndarray) -> np.ndarray:
+        """Return selected actuator controls that hold the initial joint positions."""
+        return positions
+
+    def _validate_actuator(self, joint_id: int, actuator_id: int) -> None:
+        """Check that a selected actuator matches the command type this adapter writes."""
+        self._validate_position_servo(joint_id, actuator_id)
+
+    def _validate_joint_drive(self, joint_id: int, actuator_id: int) -> None:
+        """Ensure the actuator drives exactly one scalar joint with unit gear."""
         model = self.model
         joint_name = model.joint(joint_id).name
         actuator_name = model.actuator(actuator_id).name
@@ -206,6 +216,12 @@ class MujocoRobotModel(RobotModel):
             raise ValueError(
                 f"Actuator {actuator_name!r} must directly drive {joint_name!r} with unit gear"
             )
+
+    def _validate_position_servo(self, joint_id: int, actuator_id: int) -> None:
+        """Ensure a selected joint-actuator pairing behaves like a direct position servo."""
+        model = self.model
+        actuator_name = model.actuator(actuator_id).name
+        self._validate_joint_drive(joint_id, actuator_id)
 
         gain = model.actuator_gainprm[actuator_id, 0]
         bias = model.actuator_biasprm[actuator_id, :3]
@@ -288,3 +304,88 @@ class MujocoRobotModel(RobotModel):
                 f"base positions must be a finite vector of length {len(self._base_actuator_ids)}"
             )
         self.data.ctrl[self._base_actuator_ids] = positions
+
+
+class MujocoTorqueRobotModel(MujocoRobotModel, TorqueRobotModel):
+    """MuJoCo adapter whose selected joints are driven by unit-gain motor actuators.
+
+    Selected actuators must apply ``ctrl`` directly as joint torque (``motor`` or an
+    equivalent ``general`` actuator); ``MujocoModifier.convert_to_torque_actuators``
+    builds such a model from the position-servo Panda. Dynamics are read from the
+    current MjData snapshot, so the caller must refresh it with ``mj_forward`` or
+    ``mj_step`` after editing state.
+    """
+
+    def _initial_controls(self, positions: np.ndarray) -> np.ndarray:
+        """Start motors at zero torque; the controller supplies gravity compensation."""
+        return np.zeros_like(positions)
+
+    def _validate_actuator(self, joint_id: int, actuator_id: int) -> None:
+        """Ensure a selected joint-actuator pairing applies ctrl directly as torque."""
+        model = self.model
+        actuator_name = model.actuator(actuator_id).name
+        self._validate_joint_drive(joint_id, actuator_id)
+        if not (
+            model.actuator_dyntype[actuator_id] == mujoco.mjtDyn.mjDYN_NONE
+            and model.actuator_gaintype[actuator_id] == mujoco.mjtGain.mjGAIN_FIXED
+            and model.actuator_gainprm[actuator_id, 0] == 1
+            and model.actuator_biastype[actuator_id] == mujoco.mjtBias.mjBIAS_NONE
+        ):
+            raise ValueError(f"Actuator {actuator_name!r} must be a unit-gain torque motor")
+
+    @property
+    def torque_limits(self) -> tuple[np.ndarray, np.ndarray]:
+        """Return the tighter of each motor's control and force ranges; unbounded uses ±inf."""
+        model, ids = self.model, self._actuator_ids
+        lower = np.full(len(ids), -np.inf)
+        upper = np.full(len(ids), np.inf)
+        for limited, ranges in (
+            (model.actuator_ctrllimited[ids], model.actuator_ctrlrange[ids]),
+            (model.actuator_forcelimited[ids], model.actuator_forcerange[ids]),
+        ):
+            limited = limited.astype(bool)
+            lower = np.where(limited, np.maximum(lower, ranges[:, 0]), lower)
+            upper = np.where(limited, np.minimum(upper, ranges[:, 1]), upper)
+        return lower, upper
+
+    def get_mass_matrix(self) -> np.ndarray:
+        """Return the selected rows/columns of MuJoCo's inertia matrix, including armature."""
+        full = np.zeros((self.model.nv, self.model.nv))
+        mujoco.mj_fullM(self.model, full, self.data.qM)
+        return full[np.ix_(self._dof_indices, self._dof_indices)].copy()
+
+    def get_nonlinear_forces(self) -> np.ndarray:
+        """Return qfrc_bias - qfrc_passive, so joint damping and springs are accounted for."""
+        bias = self.data.qfrc_bias - self.data.qfrc_passive
+        return bias[self._dof_indices].copy()
+
+    def get_jacobian_derivative(self, frame_name: str, step: float = 1e-6) -> np.ndarray:
+        """Return the time derivative of ``get_jacobian`` at the named body origin.
+
+        Uses a central difference along the current velocity of all DoFs, evaluated
+        on a scratch MjData so the live simulation is untouched. ``mj_jacDot`` is not
+        used because its translational rows are incorrect in the pinned MuJoCo 3.2.7.
+        """
+        body_id = self._name_id(mujoco.mjtObj.mjOBJ_BODY, frame_name)
+        if getattr(self, "_scratch", None) is None:
+            self._scratch = mujoco.MjData(self.model)
+        scratch = self._scratch
+        jacobians = []
+        for sign in (-1.0, 1.0):
+            scratch.qpos[:] = self.data.qpos
+            mujoco.mj_integratePos(self.model, scratch.qpos, self.data.qvel, sign * step)
+            mujoco.mj_kinematics(self.model, scratch)
+            mujoco.mj_comPos(self.model, scratch)
+            linear = np.zeros((3, self.model.nv))
+            angular = np.zeros_like(linear)
+            mujoco.mj_jacBody(self.model, scratch, linear, angular, body_id)
+            jacobians.append(np.vstack((linear, angular))[:, self._dof_indices])
+        return (jacobians[1] - jacobians[0]) / (2 * step)
+
+    def apply_command(self, command: JointTorqueCommand) -> None:
+        """Write joint torques to the selected motor controls."""
+        if not isinstance(command, JointTorqueCommand):
+            raise TypeError("Expected a JointTorqueCommand")
+        if command.joint_names != self.joint_names:
+            raise ValueError(f"Command joint names/order must equal {self.joint_names}")
+        self.data.ctrl[self._actuator_ids] = command.torques

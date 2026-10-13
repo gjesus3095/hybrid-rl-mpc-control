@@ -4,7 +4,9 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
-from hybrid_control.robots.state import CenterOfMassState, JointPositionCommand, JointState, Pose
+from hybrid_control.robots.state import (
+    CenterOfMassState, JointPositionCommand, JointState, JointTorqueCommand, Pose,
+)
 
 
 class RobotModel(ABC):
@@ -51,4 +53,45 @@ class RobotModel(ABC):
 
         Commands must use exactly this model's joint names and order. Physics
         and actuator force/control limits remain the simulation's responsibility.
+        """
+
+
+class TorqueRobotModel(RobotModel):
+    """Robot model whose selected joints are driven by direct torque (motor) actuators.
+
+    Adds the joint-space dynamics needed by torque-level controllers. All quantities
+    are restricted to the selected joints, in ``joint_names`` order, and satisfy
+
+        M(q) ddq + h(q, dq) = tau
+
+    where coupling to unselected DoFs (e.g. gripper fingers) is neglected.
+    """
+
+    @property
+    @abstractmethod
+    def torque_limits(self) -> tuple[np.ndarray, np.ndarray]:
+        """Lower and upper actuator torque limits (n,), N·m for hinges and N for slides."""
+
+    @abstractmethod
+    def get_mass_matrix(self) -> np.ndarray:
+        """Return the symmetric joint-space inertia matrix M(q), shape (n, n)."""
+
+    @abstractmethod
+    def get_nonlinear_forces(self) -> np.ndarray:
+        """Return h(q, dq) (n,): Coriolis, centrifugal and gravity minus passive forces."""
+
+    @abstractmethod
+    def get_jacobian_derivative(self, frame_name: str) -> np.ndarray:
+        """Return dJ/dt (6, n) for ``get_jacobian(frame_name)`` at the current state.
+
+        ``get_jacobian_derivative(frame) @ dq`` is the twist acceleration bias, so the
+        body's world acceleration is ``J ddq + dJ dq`` (m/s², rad/s²).
+        """
+
+    @abstractmethod
+    def apply_command(self, command: JointTorqueCommand) -> None:
+        """Set selected motor torques without stepping or clipping.
+
+        Commands must use exactly this model's joint names and order. Actuator
+        control limits remain the simulation's responsibility.
         """

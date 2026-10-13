@@ -31,7 +31,7 @@ If a sourced ROS environment injects incompatible pytest plugins through `PYTHON
 
 ## IK/QP Tracking Experiment
 
-`scripts/mujoco/track_targets.py` runs the Panda arm through seeded Cartesian pose targets and reports tracking errors.
+`scripts/mujoco/qp_controller/track_targets.py` runs the Panda arm through seeded Cartesian pose targets and reports tracking errors.
 
 ```bash
 uv run python scripts/mujoco/track_targets.py
@@ -51,7 +51,7 @@ Each reference runs for five simulated seconds by default, with control at 50 Hz
 
 ## Base Disturbance Experiment
 
-`scripts/mujoco/base_disturbance.py` tests whether the IK/QP controller can maintain a fixed world-frame end-effector pose while the robot base moves in X/Y/Yaw.
+`scripts/mujoco/qp_controller/base_disturbance.py` tests whether the IK/QP controller can maintain a fixed world-frame end-effector pose while the robot base moves in X/Y/Yaw.
 
 `MujocoModifier.build_mobile_base_spec` adds three DOFs to `link0` via `MjSpec`: two prismatic joints (X, Y) and one hinge joint (Yaw around Z). All three are outside the IK — they act as a disturbance. The IK/QP compensates purely through arm motion.
 
@@ -71,7 +71,7 @@ Note: base displacements that push the world-frame target outside the arm worksp
 
 ## Interactive Base Disturbance
 
-`scripts/mujoco/base_disturbance_keyboard.py` runs the same experiment interactively with keyboard control.
+`scripts/mujoco/qp_controller/base_disturbance_keyboard.py` runs the same experiment interactively with keyboard control.
 
 ```bash
 uv run python scripts/mujoco/base_disturbance_keyboard.py
@@ -85,6 +85,42 @@ uv run python scripts/mujoco/base_disturbance_keyboard.py
 | `AltGr` | base Yaw CW (−Z) |
 
 The EE target is fixed at the initial grasp world-frame pose. The arm must compensate for all base motion purely through joint motion.
+
+## Torque-Level Impedance Control
+
+`src/hybrid_control/controllers/impedance/impedance_control.py` implements a task-space impedance controller that commands joint torques. The full QP formulation and the options are documented in the [impedance controller README](src/hybrid_control/controllers/impedance/README.md). Each control step solves an inverse-dynamics QP with OSQP over `z = [ddq, tau]`:
+
+```text
+min   || ddx_des - (J ddq + dJ dq) ||²_W + λ_ddq || ddq - ddq_posture ||² + λ_tau || tau ||²
+s.t.  [M, -I] [ddq; tau] = -h
+      ddq_min <= ddq <= ddq_max
+      tau_min <= tau <= tau_max
+
+ddx_des = ddx_ref + Kp (x_ref - x) + Kd (dx_ref - dx)
+```
+
+- `M` is the joint-space inertia (including armature), and `h = qfrc_bias - qfrc_passive` (Coriolis, gravity, joint damping). Gravity compensation comes out of the equality constraint.
+- The orientation error is the world-frame rotation vector of `R_ref Rᵀ`. Damping defaults to critical (`2√Kp`).
+- The Tikhonov term pulls `ddq` towards `posture_kp (q_posture - q) - posture_kd dq`, which stabilizes the 7-DoF null space. Both posture gains set to zero reduce it to plain `λ_ddq ||ddq||²`.
+- Torque bounds are always intersected with the actuator limits.
+- Optional null-space posture torque, added after the QP: `tau += N (P (q_mid - q) - D dq)` with `N = I - Jᵀ Λ J M⁻¹` and `Λ = (J M⁻¹ Jᵀ)⁻¹`. It moves only the arm's redundant DoF (the elbow swivel) and leaves the hand untouched. Enable it with `nullspace_posture`, and set the QP posture gains to zero so the two don't compete.
+
+`MujocoModifier.build_torque_spec` converts the Panda position servos into unit-gain torque motors (bounded by their force range), and `MujocoTorqueRobotModel` exposes the dynamics through the `TorqueRobotModel` interface. Reference trajectories (`QuinticTrajectory`, `SinusoidalTrajectory`) are in `src/hybrid_control/utils/trajectories.py`.
+
+```bash
+uv run python scripts/mujoco/impedance_tracking.py
+```
+
+Configuration at the top of the script:
+
+- `TRAJECTORY`: `"quintic"` (rest-to-rest segments through `N_WAYPOINTS` seeded waypoints, then back home) or `"sine"` (per-axis `SINE_AMPLITUDE`/`SINE_FREQUENCY_HZ`).
+- `KP_POS`, `KP_ORI`, `KD_POS`, `KD_ORI`, weights, regularization and `POSTURE_KP`.
+- `TAU_MAX`, `DDQ_MAX`: Franka datasheet torque and acceleration limits.
+- `DT_CTRL`: 2 ms by default, so torques are updated every physics step.
+- `USE_NULLSPACE`, `Q_MID`, `P_NULLSPACE`, `D_NULLSPACE`: null-space posture torque (on by default, `P = 10`, `D = 1`).
+- `SAVE_PLOT`: a PNG path for reference vs. actual position and torques.
+
+Each segment must end within 5 mm / 0.03 rad and stay within 20 mm while moving. The sine reference starts at full speed from rest, so its first ~0.2 s shows a transient of about 10 mm.
 
 ## Project Structure
 
@@ -105,9 +141,11 @@ hybrid-rl-ik-control/
 │   └── hybrid_control/
 │       ├── controllers/
 │       │   ├── base.py
-│       │   └── ik_qp/
-│       │       ├── controller.py
-│       │       └── tasks.py               [planned]
+│       │   ├── ik_qp/
+│       │   │   ├── controller.py
+│       │   │   └── tasks.py               [planned]
+│       │   └── impedance/
+│       │       └── impedance_control.py
 │       │
 │       ├── robots/
 │       │   ├── model.py
@@ -116,6 +154,7 @@ hybrid-rl-ik-control/
 │       ├── sim_interfaces/
 │       │   ├── mujoco/
 │       │   │   ├── adapter.py
+│       │   │   ├── modifier.py
 │       │   │   └── models/panda/          (panda.xml, scene.xml, hand.xml, assets/)
 │       │   └── isaac/                     [planned]
 │       │       ├── adapter.py
@@ -139,7 +178,7 @@ hybrid-rl-ik-control/
 │       │
 │       └── utils/
 │           ├── math_helpers.py
-│           ├── trajectories.py            [planned]
+│           ├── trajectories.py
 │           └── transforms.py             [planned]
 │
 ├── scripts/
@@ -147,6 +186,7 @@ hybrid-rl-ik-control/
 │   │   ├── track_targets.py
 │   │   ├── base_disturbance.py
 │   │   ├── base_disturbance_keyboard.py
+│   │   ├── impedance_tracking.py
 │   │   └── test_trajectory.py            [planned]
 │   ├── isaac/                            [planned]
 │   │   ├── test_ik.py
@@ -157,6 +197,7 @@ hybrid-rl-ik-control/
 │
 ├── tests/
 │   ├── test_model_controller.py
+│   ├── test_impedance_control.py
 │   ├── test_kinematics.py                [planned]
 │   └── test_hybrid.py                   [planned]
 │

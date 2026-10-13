@@ -116,3 +116,24 @@ class JointVelocityCommand:
             raise ValueError("joint_names must be unique")
         object.__setattr__(self, "joint_names", names)
         object.__setattr__(self, "velocities", _vector(self.velocities, "velocities", len(names)))
+
+
+@dataclass(frozen=True)
+class JointTorqueCommand:
+    """Joint effort commands (n,), in the explicitly supplied joint-name order.
+
+    Hinge commands are torques in N·m; slide commands are forces in N. These are
+    applied directly by motor actuators and do not include any servo feedback.
+    """
+
+    joint_names: tuple[str, ...]
+    torques: np.ndarray
+
+    def __post_init__(self):
+        names = tuple(self.joint_names)
+        if not names or any(not isinstance(name, str) or not name for name in names):
+            raise ValueError("joint_names must contain nonempty strings")
+        if len(set(names)) != len(names):
+            raise ValueError("joint_names must be unique")
+        object.__setattr__(self, "joint_names", names)
+        object.__setattr__(self, "torques", _vector(self.torques, "torques", len(names)))
