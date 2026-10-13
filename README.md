@@ -31,7 +31,7 @@ If a sourced ROS environment injects incompatible pytest plugins through `PYTHON
 
 ## IK/QP Tracking Experiment
 
-`scripts/mujoco/track_targets.py` runs the Panda arm through seeded Cartesian pose targets and reports tracking errors.
+`scripts/mujoco/qp_controller/track_targets.py` runs the Panda arm through seeded Cartesian pose targets and reports tracking errors.
 
 ```bash
 uv run python scripts/mujoco/track_targets.py
@@ -51,7 +51,7 @@ Each reference runs for five simulated seconds by default, with control at 50 Hz
 
 ## Base Disturbance Experiment
 
-`scripts/mujoco/base_disturbance.py` tests whether the IK/QP controller can maintain a fixed world-frame end-effector pose while the robot base moves in X/Y/Yaw.
+`scripts/mujoco/qp_controller/base_disturbance.py` tests whether the IK/QP controller can maintain a fixed world-frame end-effector pose while the robot base moves in X/Y/Yaw.
 
 `MujocoModifier.build_mobile_base_spec` adds three DOFs to `link0` via `MjSpec`: two prismatic joints (X, Y) and one hinge joint (Yaw around Z). All three are outside the IK — they act as a disturbance. The IK/QP compensates purely through arm motion.
 
@@ -71,7 +71,7 @@ Note: base displacements that push the world-frame target outside the arm worksp
 
 ## Interactive Base Disturbance
 
-`scripts/mujoco/base_disturbance_keyboard.py` runs the same experiment interactively with keyboard control.
+`scripts/mujoco/qp_controller/base_disturbance_keyboard.py` runs the same experiment interactively with keyboard control.
 
 ```bash
 uv run python scripts/mujoco/base_disturbance_keyboard.py
