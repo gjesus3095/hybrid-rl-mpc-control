@@ -32,8 +32,9 @@ from hybrid_control.utils.trajectories import QuinticTrajectory, SinusoidalTraje
 # ==================================================================================================
 MODEL_DIR = files("hybrid_control.sim_interfaces.mujoco.models.panda")
 XML_FILE = str(MODEL_DIR / "scene.xml")
-SHOW_VIEWER = True  # Set True for the interactive view; a red sphere marks the reference.
+SHOW_VIEWER = True  # Set True for the interactive view.
 SAVE_PLOT = None  # e.g. "impedance_tracking.png" to save reference vs. actual position.
+COM_MARKER_DIAMETER = 0.05  # metres; viewer-only marker, not part of the dynamics model.
 
 # --- Control parameters ---
 JOINT_ACTUATOR_PAIRS = tuple((f"joint{i}", f"actuator{i}") for i in range(1, 8))
@@ -82,6 +83,8 @@ SINE_SECONDS = 6.0
 POSITION_TOLERANCE = 0.005  # m, at the end of each settle phase.
 ORIENTATION_TOLERANCE = 0.03  # rad
 TRACKING_TOLERANCE = 0.02  # m, maximum position error while moving.
+
+_modifier = MujocoModifier(COM_MARKER_DIAMETER)
 
 
 # ==================================================================================================
@@ -153,16 +156,6 @@ def pose_error(robot, pose: Pose) -> tuple[float, float]:
     return position_error, float(2 * np.arccos(cosine))
 
 
-def draw_reference(handle, position) -> None:
-    with handle.lock():
-        handle.user_scn.ngeom = 1
-        mujoco.mjv_initGeom(
-            handle.user_scn.geoms[0], mujoco.mjtGeom.mjGEOM_SPHERE,
-            np.full(3, 0.012), position, np.eye(3).ravel(),
-            np.array([1.0, 0.1, 0.1, 0.8], dtype=np.float32),
-        )
-
-
 def run_tracking(*, viewer=False):
     robot = create_simulation()
     model, data = robot.model, robot.data
@@ -210,7 +203,7 @@ def run_tracking(*, viewer=False):
                 log["actual"].append(robot.get_pose(FRAME_CONTROL).position)
                 log["torque"].append(command.torques)
                 if handle is not None:
-                    draw_reference(handle, sample.pose.position)
+                    _modifier.update_overlay(handle, robot, sample.pose)
                     handle.sync()
                     time.sleep(max(0.0, dt - (time.perf_counter() - started)))
 
