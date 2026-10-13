@@ -14,7 +14,7 @@ pin = pytest.importorskip("pinocchio")
 pytest.importorskip("pink")
 
 from hybrid_control.controllers.ik_qp.config import IKQPConfig, PoseTarget
-from hybrid_control.controllers.ik_qp.ik_qp import DEFAULT_URDF, PinkInverseKinematicsController
+from hybrid_control.controllers.ik_qp.ik_qp import DEFAULT_URDF, PinkInverseKinematicsController, build_model
 from hybrid_control.controllers.ik_qp.ik_qp_mujoco import InverseKinematicsController
 from hybrid_control.robots.model import RobotModel
 from hybrid_control.robots.state import JointState, Pose
@@ -70,7 +70,7 @@ def make_config(dq_max=20.0, damping=1e5):
 
 def perturbed_target(robot, rng, scale):
     pose = robot.get_pose(FRAME)
-    rotation = Rotation.from_rotvec(rng.normal(size=3) * scale) * Rotation.from_quat(pose.quaternion)
+    rotation = Rotation.from_rotvec(rng.normal(size=3) * scale) * Rotation.from_quat(np.array(pose.quaternion))
     return PoseTarget(FRAME, Pose(pose.position + rng.normal(size=3) * scale, rotation.as_quat()))
 
 
@@ -134,3 +134,27 @@ def test_rejects_non_urdf_joint_names():
 def test_rejects_unsupported_solver():
     with pytest.raises(ValueError, match="Solver"):
         PinkInverseKinematicsController(PinocchioRobot(Q_HOME, BASE), make_config(), solver="quadprog")
+
+
+TCP_OFFSET = Pose(np.array([0.0, 0.0, 0.1121]), np.array([0.0, 0.0, 0.0, 1.0]))
+
+
+def test_extra_frame_is_parent_times_offset():
+    model = build_model(extra_frames={"tcp": ("panda_hand", TCP_OFFSET)})
+    data = model.createData()
+    pin.framesForwardKinematics(model, data, pin.neutral(model))
+    expected = data.oMf[model.getFrameId("panda_hand")] * pin.SE3(np.eye(3), TCP_OFFSET.position)
+    np.testing.assert_allclose(data.oMf[model.getFrameId("tcp")].homogeneous, expected.homogeneous, atol=1e-12)
+
+
+@pytest.mark.parametrize("solver", SOLVERS)
+def test_tracks_extra_frame(solver):
+    """A target that only moves the TCP must be reached by rotating about the TCP, not the hand."""
+    robot = PinocchioRobot(Q_HOME, BASE)
+    frames = {"tcp": ("panda_hand", TCP_OFFSET)}
+    hand = robot.get_pose("panda_hand")
+    rotation = Rotation.from_quat(np.array(hand.quaternion))
+    tcp = Pose(hand.position + rotation.apply(np.array(TCP_OFFSET.position)), hand.quaternion)
+    controller = PinkInverseKinematicsController(robot, make_config(), solver=solver, extra_frames=frames)
+    command = controller.compute(PoseTarget("tcp", tcp), DT)
+    np.testing.assert_allclose(command.positions, robot.get_state().positions, atol=1e-9)

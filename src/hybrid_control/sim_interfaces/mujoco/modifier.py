@@ -53,6 +53,7 @@ class MujocoModifier:
         modifier.update_overlay(handle, robot, target_pose)
 
         spec = MujocoModifier.build_mobile_base_spec(xml_file, base_range=2.0, servo_kp=5000.0)
+        spec = MujocoModifier.build_torque_spec(xml_file, actuator_names)
     """
 
     def __init__(self, com_marker_diameter: float = 0.05):
@@ -127,3 +128,36 @@ class MujocoModifier:
             a.ctrlrange = [-rng, rng]
 
         return spec
+
+    @staticmethod
+    def convert_to_torque_actuators(spec: mujoco.MjSpec, actuator_names) -> mujoco.MjSpec:
+        """Turn named joint actuators into unit-gain torque motors, in place.
+
+        Each actuator keeps its joint and force range; ``ctrl`` becomes torque (N·m)
+        bounded by that force range. Servo gains and bias terms are removed, so no
+        gravity compensation or position feedback remains in the actuator.
+        """
+        actuators = {actuator.name: actuator for actuator in spec.actuators}
+        for name in actuator_names:
+            if name not in actuators:
+                raise ValueError(f"Unknown actuator: {name!r}")
+            a = actuators[name]
+            if a.trntype != mujoco.mjtTrn.mjTRN_JOINT:
+                raise ValueError(f"Actuator {name!r} must drive a joint")
+            if not a.forcelimited or a.forcerange[0] >= a.forcerange[1]:
+                raise ValueError(f"Actuator {name!r} needs a force range to bound torque")
+            a.dyntype = mujoco.mjtDyn.mjDYN_NONE
+            a.gaintype = mujoco.mjtGain.mjGAIN_FIXED
+            a.gainprm[:] = 0
+            a.gainprm[0] = 1
+            a.biastype = mujoco.mjtBias.mjBIAS_NONE
+            a.biasprm[:] = 0
+            a.ctrllimited = True
+            a.ctrlrange = a.forcerange.copy()
+        return spec
+
+    @staticmethod
+    def build_torque_spec(xml_file: str, actuator_names) -> mujoco.MjSpec:
+        """Load a scene XML and convert the named actuators to torque motors."""
+        spec = mujoco.MjSpec.from_file(xml_file)
+        return MujocoModifier.convert_to_torque_actuators(spec, actuator_names)

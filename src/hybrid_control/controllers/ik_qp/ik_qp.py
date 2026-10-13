@@ -19,7 +19,7 @@ joints ``panda_joint1..7``; frames ``panda_link0..8``, ``panda_hand``, ``panda_e
 """
 
 from importlib.resources import files
-from typing import Optional, Tuple
+from typing import Mapping, Optional, Tuple
 
 import numpy as np
 import pinocchio as pin
@@ -40,6 +40,19 @@ DEFAULT_URDF = files("hybrid_control.sim_interfaces.isaac.assets.franka") / "lul
 
 def _se3(pose: Pose) -> pin.SE3:
     return pin.SE3(pin.Quaternion(pose.quaternion).toRotationMatrix(), pose.position)
+
+
+def build_model(urdf_path=DEFAULT_URDF, extra_frames: Optional[Mapping[str, Tuple[str, Pose]]] = None) -> pin.Model:
+    """URDF model plus fixed frames ``{name: (parent_frame, offset in parent)}``, e.g. a TCP not in the URDF."""
+    model = pin.buildModelFromUrdf(str(urdf_path))
+    for name, (parent, offset) in (extra_frames or {}).items():
+        if not model.existFrame(parent):
+            raise ValueError(f"Parent frame '{parent}' of '{name}' is not in {urdf_path}")
+        parent_id = model.getFrameId(parent)
+        frame = model.frames[parent_id]
+        joint = frame.parentJoint if hasattr(frame, "parentJoint") else frame.parent  # Pinocchio 3 / 2.6
+        model.addFrame(pin.Frame(name, joint, parent_id, frame.placement * _se3(offset), pin.FrameType.OP_FRAME))
+    return model
 
 
 class _JointBoxLimit(Limit):
@@ -73,7 +86,8 @@ class PinkInverseKinematicsController(Controller[PoseTarget, JointPositionComman
     SOLVER_OPTIONS = {"osqp": {"eps_abs": 1e-7, "eps_rel": 1e-7, "polish": True}, "daqp": {}}
 
     def __init__(self, robot: RobotModel, config: IKQPConfig, urdf_path=DEFAULT_URDF,
-                 root_frame: str = "panda_link0", solver: str = "osqp"):
+                 root_frame: str = "panda_link0", solver: str = "osqp",
+                 extra_frames: Optional[Mapping[str, Tuple[str, Pose]]] = None):
         self.robot = robot
         self.config = config
         self.root_frame = root_frame
@@ -85,7 +99,7 @@ class PinkInverseKinematicsController(Controller[PoseTarget, JointPositionComman
         if config.velocity_lower.shape != (len(names),):
             raise ValueError("Velocity bounds must match the model's selected joint count")
 
-        model = pin.buildModelFromUrdf(str(urdf_path))
+        model = build_model(urdf_path, extra_frames)
         missing = [n for n in names if not model.existJointName(n)]
         if missing:
             raise ValueError(f"Joints {missing} are not in {urdf_path}; the RobotModel must use the URDF joint names")

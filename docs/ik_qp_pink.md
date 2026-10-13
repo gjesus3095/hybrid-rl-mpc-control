@@ -9,6 +9,7 @@
 | `controllers/ik_qp/ik_qp.py` | New. `PinkInverseKinematicsController(robot, IKQPConfig, solver="osqp" \| "daqp")`, with the same `compute(PoseTarget, dt) -> JointPositionCommand` interface. |
 | `sim_interfaces/isaac/assets/franka/lula_franka_gen.urdf` | Unmodified copy of Isaac Lab's Franka URDF (IsaacLab @ `6ec3e9b`). License: `docs/licenses/IsaacLab-LICENSE`. |
 | `pyproject.toml` | `isaac` extra: `pin-pink`, `qpsolvers<4.9` (4.9+ needs osqp ≥ 1.0, which `ik_qp_mujoco` does not support), `daqp==0.8.5` (same pin as Isaac Lab). |
+| `ik_qp.build_model` / `extra_frames` | Adds fixed frames that aren't in the URDF (e.g. the TCP) without editing the vendored file. |
 | `tests/test_ik_qp_pink.py` | Runs both solvers on a Pinocchio-only robot (no simulator) whose base is shifted and rotated. Checks the result against the exact QP optimum (BVLS), checks bounds, and checks that bad joint names and solvers are rejected. |
 
 Install: `uv sync --extra isaac --group test`. Test: `env -u PYTHONPATH uv run pytest -q`.
@@ -52,12 +53,12 @@ In the 3 cm runs, 64 of the 100 cases have a bound active at the optimum. In the
 1. **Isaac Lab 3 requirement.** Isaac Lab needs Python 3.12, while this repo pins Python < 3.12 and numpy 1.23.
    - Once that's resolved, drop the vendored URDF and load `isaaclab.controllers.config/data/lula_franka_gen.urdf` (see the `ik_qp.py` docstring).
    - Then revisit the `pin` (2.6 → 3.x), `qpsolvers<4.9` and osqp 0.6 pins.
-2. **Isaac `RobotModel` adapter.** `ik_qp` has only been run on the Pinocchio test robot. It needs an Isaac Lab articulation adapter that exposes the `panda_*` names, position limits, `get_pose("panda_link0")` and `apply_command`.
-3. **Closed-loop validation in Isaac Lab.** Port the equivalent of `scripts/mujoco/track_targets.py` and `base_disturbance.py`. The current tests only check single QP steps.
-4. **Batching for RL.** The controller is a single-environment NumPy/CPU implementation, about 0.3 ms per step with daqp. Isaac Lab RL steps `num_envs` environments on GPU, so decide between one controller per environment and a batched version.
-5. **End-effector frame.** The MuJoCo scripts track `grasp` (`hand` + 0.07 m). The URDF has `panda_hand` and `panda_end_effector` (`panda_hand` + 0.107 m) but no `grasp`. Agree on a TCP frame, or add one to the URDF.
+2. **Isaac `RobotModel` adapter.** Done: `sim_interfaces/isaac/adapter.py`. `IsaacArticulationBuffer` makes one GPU→CPU read and one CPU→GPU write per control step. `IsaacRobotModel` gives one view per environment, with `extra_frames` for the TCP and `pose_overrides` for the predicted base pose. It also sends `dq` as a joint velocity feedforward; without it, the implicit PD (K = 800, D = 40) only reaches about 40% of the QP velocity.
+3. **Closed-loop validation in Isaac Lab.** Base disturbance is done in `scripts/isaac/base_disturbance_keyboard.py` (see `docs/isaac_base_disturbance.md`). The port of `track_targets.py` is still open; the script's `target_fn` already accepts any path.
+4. **Batching for RL.** There is one controller per environment, solved sequentially on the CPU. Measured headless with 16 environments and daqp, per 20 ms control step (mean): read 0.4 ms, solve 5.5 ms (about 0.35 ms per environment), write 1.3 ms, physics 26 ms. A batched GPU QP is needed if `num_envs` grows well beyond 16.
+5. **End-effector frame.** The TCP is `panda_fingertip_centered`, the Factory TCP at `panda_hand` + 0.1121 m. It is read from `Factory/franka_mimic.usd` and added through `extra_frames`. The MuJoCo scripts still track `grasp` (`hand` + 0.07 m).
 6. **Gains.** The current scripts use `kp_pos = 80` with `dt = 0.02`, which gives a Pink position gain of 1.6. Pink documents gains in [0, 1], and gains above 1 overshoot within a step. Retune, or accept that it matches `ik_qp_mujoco`.
 7. **Formulation choice.** Decide whether to keep the SE(3)-log error, including the 0.5 orientation factor, or match `ik_qp_mujoco` exactly. The two differ by up to about 8% for large pose errors.
 8. **Default solver.** Choose between daqp, which Isaac Lab uses and which is exact and 3× faster here, and osqp, the Isaac Sim Pink default. The code currently defaults to `osqp`.
-9. **Base motion.** The target is re-expressed at the current base pose, but neither controller feeds forward the base velocity. The RL-driven base will therefore cause tracking lag.
+9. **Base motion.** The Isaac script solves the QP against the base pose predicted from the commanded base velocity, using gain 1 (`kp_pos·dt = 0.5·kp_ori·dt = 1`). That removes the lag at constant base velocity; with gains below 1 the steady-state error is `d·(1−g)/g`. `ik_qp_mujoco` still has no base feedforward.
 10. **`ik_qp_mujoco` accuracy.** Its OSQP defaults can be far from the optimum when pose errors are large. Apply the same tolerance and polish settings there if it stays in use.
