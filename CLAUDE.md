@@ -35,7 +35,7 @@ Hybrid controller for a 3-DoF planar mobile base (RL) + 7-DoF Franka Panda arm (
 - `scripts/isaac/base_disturbance_keyboard.py` — keyboard-driven Ridgeback base, Pink IK/QP holds the TCP (`docs/isaac_base_disturbance.md`)
 - `src/hybrid_control/controllers/impedance/impedance_control.py` — `ImpedanceController(TorqueRobotModel, ImpedanceQPConfig)`: main's inverse-dynamics impedance QP (OSQP) with null-space posture torque and manipulability floor (`utils/manipulability.py`); see its README
 - `IsaacDynamicsBuffer` + `IsaacTorqueRobotModel` (same `isaac/adapter.py`) — mass matrix, gravity + Coriolis forces, Jacobians and effort targets from PhysX for torque control
-- `scripts/isaac/base_disturbance_impedance.py` — same Ridgeback test with the torque-level impedance QP at 500 Hz
+- `scripts/isaac/base_disturbance_impedance.py` — same Ridgeback test with the torque-level impedance QP (`--control_hz` 50, `--physics_hz` 200 by default)
 - `src/hybrid_control/sim_interfaces/isaac/assets/franka/lula_franka_gen.urdf` — temporary copy of Isaac Lab's Franka URDF (see `ik_qp.py` docstring)
 - `src/hybrid_control/utils/math_helpers.py` — math utilities for kinematics
 - `src/hybrid_control/sim_interfaces/mujoco/models/panda/` — Panda XML model + meshes
