@@ -74,7 +74,7 @@ The flag is not called `--video` because Isaac Lab's launcher already uses that 
 
 ## Torque control: impedance QP from `main`
 
-`scripts/isaac/base_disturbance_impedance.py` runs the same test with main's inverse-dynamics impedance QP (`controllers/impedance/`, see its README) instead of the Pink IK. The arm's PD gains are zeroed (pure effort targets) and gravity is on; the QP compensates it. Physics and QP both run at 500 Hz, as in main's MuJoCo scripts. Enabled options: null-space posture torque towards `Q_MID`, the manipulability floor (`w >= 0.03`, full Jacobian) and joint-limit barriers. The commanded base twist is fed forward through the target's velocity/acceleration, because the controller only sees the arm joints. Same flags as above, except `--solver` (OSQP only); defaults: 6 envs, `logs/isaac_impedance.{csv,mp4}`.
+`scripts/isaac/base_disturbance_impedance.py` runs the same test with main's inverse-dynamics impedance QP (`controllers/impedance/`, see its README) instead of the Pink IK. The arm's PD gains are zeroed (pure effort targets) and gravity is on; the QP compensates it. The QP runs at `--control_hz` (default 50 Hz) and holds its torques over `--physics_hz / --control_hz` physics steps (default 200 Hz, so 4). Main's MuJoCo scripts use 500 Hz, but main's gains track as well at 50 Hz: 0.06 mm steady TCP error at 0.3 m/s, ~16 mm peak at a base reversal. Enabled options: null-space posture torque towards `Q_MID`, the manipulability floor (`w >= 0.03`, full Jacobian) and joint-limit barriers. The commanded base twist is fed forward through the target's velocity/acceleration, because the controller only sees the arm joints. Same flags as above, except `--solver` (OSQP only); defaults: 6 envs, `logs/isaac_impedance.{csv,mp4}`.
 
 ```bash
 # 5 s video of 6 envs (headless)
@@ -83,4 +83,4 @@ DISPLAY= PYTHONPATH=$PWD/src ~/IsaacLab/.venv/bin/python scripts/isaac/base_dist
 PYTHONPATH=$PWD/src ~/IsaacLab/.venv/bin/python scripts/isaac/base_disturbance_impedance.py --viz kit
 ```
 
-It runs at ~0.1x real time with 6 envs: ~1.8 ms CPU per env and QP every 2 ms step.
+With 6 envs at 50/200 Hz one simulated second takes ~1.7 s (QP ~1.8 ms per env per control step, physics ~5.5 ms per step); `--physics_hz 100` brings it to ~1.15 s with ~0.1 mm steady error.
