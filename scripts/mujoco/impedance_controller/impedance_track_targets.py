@@ -17,13 +17,10 @@ import mujoco
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from hybrid_control.controllers.impedance.impedance_control import (
-    ImpedanceController,
-    ImpedanceQPConfig,
-    TaskSpaceTarget,
-)
+from hybrid_control.controllers.impedance.impedance_control import ImpedanceController
+from hybrid_control.utils.control_utils import ImpedanceQPConfig, TaskSpaceTarget
 from hybrid_control.robots.state import Pose
-from hybrid_control.sim_interfaces.mujoco.adapter import MujocoTorqueRobotModel
+from hybrid_control.sim_interfaces.mujoco.adapter import MujocoRobotModel
 from hybrid_control.sim_interfaces.mujoco.modifier import MujocoModifier
 from hybrid_control.utils.logger import logger
 
@@ -84,11 +81,11 @@ _modifier = MujocoModifier(COM_MARKER_DIAMETER)
 # ==================================================================================================
 # 2. SIMULATION SETUP
 # ==================================================================================================
-def create_simulation() -> MujocoTorqueRobotModel:
+def create_simulation() -> MujocoRobotModel:
     spec = MujocoModifier.build_torque_spec(XML_FILE, [actuator for _, actuator in JOINT_ACTUATOR_PAIRS])
     model = spec.compile()
     data = mujoco.MjData(model)
-    robot = MujocoTorqueRobotModel(model, data, JOINT_ACTUATOR_PAIRS)
+    robot = MujocoRobotModel(model, data, JOINT_ACTUATOR_PAIRS, control_mode="torque")
     robot.initialize(
         Q_INIT,
         extra_joint_positions={
@@ -100,7 +97,7 @@ def create_simulation() -> MujocoTorqueRobotModel:
     return robot
 
 
-def create_controller(robot: MujocoTorqueRobotModel) -> ImpedanceController:
+def create_controller(robot: MujocoRobotModel) -> ImpedanceController:
     config = ImpedanceQPConfig(
         acceleration_lower=-DDQ_MAX, acceleration_upper=DDQ_MAX,
         torque_lower=-TAU_MAX, torque_upper=TAU_MAX,

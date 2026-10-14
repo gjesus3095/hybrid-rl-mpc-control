@@ -65,7 +65,7 @@ See [scripts/README.md](scripts/README.md) for all scripts, their configuration 
 
 ## Interfaces
 
-The controller computes commands through a simulator-independent `RobotModel` interface. `MujocoRobotModel` wraps an existing simulation using explicit joint-to-actuator mappings. See [docs/model_controller_interfaces.md](docs/model_controller_interfaces.md) for conventions and usage.
+The controller computes commands through a simulator-independent `RobotModel` interface. `MujocoRobotModel` wraps an existing simulation using explicit joint-to-actuator mappings and a required `control_mode` (`"position"`, `"velocity"`, or `"torque"`). Controllers declare their output mode and reject incompatible models during construction. See [docs/model_controller_interfaces.md](docs/model_controller_interfaces.md) for conventions and usage.
 
 ## Project Structure
 

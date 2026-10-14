@@ -61,9 +61,9 @@ from isaaclab.utils import clone, configclass, instantiate, replace
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR, retrieve_file_path
 from isaaclab_assets import RIDGEBACK_FRANKA_PANDA_CFG
 
-from hybrid_control.controllers.impedance.impedance_control import (
-    ImpedanceController, ImpedanceQPConfig, TaskSpaceTarget,
-)
+from hybrid_control.controllers.impedance.impedance_control import ImpedanceController
+from hybrid_control.utils.math_helpers import pose_yaw, base_command_world, pose_error
+from hybrid_control.utils.control_utils import ImpedanceQPConfig, TaskSpaceTarget
 from hybrid_control.robots.state import JointTorqueCommand, Pose
 from hybrid_control.sim_interfaces.isaac.adapter import IsaacDynamicsBuffer, IsaacTorqueRobotModel
 from hybrid_control.utils.logger import logger
@@ -128,17 +128,6 @@ def tcp_offset() -> Pose:
     return Pose(np.array(relative.ExtractTranslation()), np.array([*rotation.GetImaginary(), rotation.GetReal()]))
 
 
-def yaw(pose: Pose) -> float:
-    R = Rotation.from_quat(np.array(pose.quaternion)).as_matrix()
-    return float(np.arctan2(R[1, 0], R[0, 0]))
-
-
-def base_command_world(command: np.ndarray, base_yaw: float) -> np.ndarray:
-    """Base-frame (vx, vy, wz) -> base joint velocities (world vx, vy, wz)."""
-    c, s = np.cos(base_yaw), np.sin(base_yaw)
-    return np.array([c * command[0] - s * command[1], s * command[0] + c * command[1], command[2]])
-
-
 def base_feedforward(robot: IsaacTorqueRobotModel, base_vel: np.ndarray, target: Pose) -> TaskSpaceTarget:
     """Fixed world target expressed for a controller that only sees the arm joints.
 
@@ -153,12 +142,6 @@ def base_feedforward(robot: IsaacTorqueRobotModel, base_vel: np.ndarray, target:
     velocity = np.r_[np.r_[base_vel[:2], 0.0] + np.cross(w, r), w]
     acceleration = np.r_[np.cross(w, np.cross(w, r)) + np.cross(w, arm_velocity), np.zeros(3)]
     return TaskSpaceTarget(TCP, target, -velocity, -acceleration)
-
-
-def pose_error(target: Pose, pose: Pose) -> tuple[float, float]:
-    """Position (m) and rotation-angle (rad) error."""
-    rotation = Rotation.from_quat(np.array(target.quaternion)) * Rotation.from_quat(np.array(pose.quaternion)).inv()
-    return float(np.linalg.norm(target.position - pose.position)), float(rotation.magnitude())
 
 
 def marker(cfg, path: str, **sphere):
@@ -371,7 +354,7 @@ def run(sim, scene, camera=None):
             tcp = [r.get_pose(TCP) for r in robots]
             errors = np.array([pose_error(target_fn(sim_time, e), tcp[e]) for e in range(num_envs)])
             command, phase = read_command(sim_time)
-            yaws = np.array([yaw(robot.get_pose(BASE_LINK)) for robot in robots])
+            yaws = np.array([pose_yaw(robot.get_pose(BASE_LINK)) for robot in robots])
             base_targets = np.array([base_command_world(command, base_yaw) for base_yaw in yaws])
 
             # 2. The QP of all envs (same sim time for all); a failed env falls back to h (gravity/Coriolis)

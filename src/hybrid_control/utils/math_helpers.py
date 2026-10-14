@@ -1,5 +1,10 @@
+"""Reusable vector and rigid-transform math; quaternions are ordered xyzw."""
+
 import numpy as np
 from typing import Tuple
+from scipy.spatial.transform import Rotation
+
+from hybrid_control.robots.state import Pose
 
 class MathHelpers:
     # ----------------------------------------------------------------------------------------------
@@ -55,3 +60,80 @@ class MathHelpers:
         if np.dot(reference_quat, candidate_quat) < 0:
             return -candidate_quat
         return candidate_quat
+
+
+def finite_vector(value, size: int, name: str) -> np.ndarray:
+    """Return an independent read-only finite vector of the requested length."""
+    result = np.array(value, dtype=float, copy=True)
+    if result.shape != (size,) or not np.all(np.isfinite(result)):
+        raise ValueError(f"{name} must be a finite vector of length {size}")
+    result.setflags(write=False)
+    return result
+
+
+def pose_to_se3(pose: Pose):
+    """Convert a pose to Pinocchio SE3; Pinocchio is needed only for this operation."""
+    import pinocchio as pin
+
+    return pin.SE3(pin.Quaternion(pose.quaternion).toRotationMatrix(), pose.position)
+
+
+def pose_to_matrix(pose: Pose) -> np.ndarray:
+    """Return a (4, 4) homogeneous transform from a pose in metres and xyzw."""
+    T = np.eye(4)
+    T[:3, :3], T[:3, 3] = Rotation.from_quat(np.array(pose.quaternion)).as_matrix(), pose.position
+    return T
+
+
+def poses_to_matrices(poses: np.ndarray) -> np.ndarray:
+    """(N, 7) poses (position, xyzw) -> (N, 4, 4) homogeneous transforms."""
+    T = np.tile(np.eye(4), (len(poses), 1, 1))
+    T[:, :3, :3], T[:, :3, 3] = Rotation.from_quat(poses[:, 3:]).as_matrix(), poses[:, :3]
+    return T
+
+
+def compose_poses(parent: np.ndarray, offset: Pose) -> np.ndarray:
+    """World poses (N, 7) of ``offset`` expressed in each of the ``parent`` poses (N, 7)."""
+    rotation = Rotation.from_quat(parent[:, 3:])
+    return np.c_[parent[:, :3] + rotation.apply(np.array(offset.position)),
+                 (rotation * Rotation.from_quat(np.array(offset.quaternion))).as_quat()]
+
+
+def predict_after_base_motion(base: np.ndarray, frame: np.ndarray, base_vel: np.ndarray, dt: float) -> np.ndarray:
+    """World poses (N, 7) of ``frame`` after the base joints (world x, y, then yaw) move by base_vel*dt.
+
+    T' = Trans(dx, dy) @ B @ Rz(dyaw) @ B^-1 @ T, with B the current base_link pose; base, frame
+    (N, 7) world poses (xyzw), base_vel (N, 3).
+    """
+    B = poses_to_matrices(base)
+    delta = np.tile(np.eye(4), (len(base), 1, 1))
+    delta[:, :3, :3] = Rotation.from_euler("z", base_vel[:, 2:3] * dt).as_matrix()
+    T = B @ delta @ np.linalg.inv(B) @ poses_to_matrices(frame)
+    T[:, :2, 3] += base_vel[:, :2] * dt
+    return np.c_[T[:, :3, 3], Rotation.from_matrix(T[:, :3, :3]).as_quat()]
+
+
+def pose_yaw(pose: Pose | np.ndarray):
+    """Return yaw (rad) for a Pose or an (N, 7) position/xyzw array."""
+    quaternion = np.array(pose.quaternion) if isinstance(pose, Pose) else pose[:, 3:]
+    rotation = Rotation.from_quat(quaternion).as_matrix()
+    return np.arctan2(rotation[..., 1, 0], rotation[..., 0, 0])
+
+
+def base_command_world(command: np.ndarray, base_yaw: float | np.ndarray) -> np.ndarray:
+    """Rotate base-frame (vx, vy, wz) to world axes; scalar/batched yaw returns (3,)/(N, 3)."""
+    c, s = np.cos(base_yaw), np.sin(base_yaw)
+    return np.stack([c * command[0] - s * command[1], s * command[0] + c * command[1],
+                     np.full_like(c, command[2])], axis=-1)
+
+
+def pose_error(target: Pose | np.ndarray, pose: Pose | np.ndarray):
+    """Position (m) and rotation-angle (rad) errors; two Poses or two (N, 7) arrays.
+
+    Returns a pair of floats for Poses, or an (N, 2) array for batched inputs.
+    """
+    if isinstance(target, Pose) and isinstance(pose, Pose):
+        rotation = Rotation.from_quat(np.array(target.quaternion)) * Rotation.from_quat(np.array(pose.quaternion)).inv()
+        return float(np.linalg.norm(target.position - pose.position)), float(rotation.magnitude())
+    rotation = Rotation.from_quat(target[:, 3:]) * Rotation.from_quat(pose[:, 3:]).inv()
+    return np.c_[np.linalg.norm(target[:, :3] - pose[:, :3], axis=1), rotation.magnitude()]

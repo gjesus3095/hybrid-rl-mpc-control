@@ -16,7 +16,7 @@ import numpy as np
 import pinocchio as pin
 from scipy.spatial.transform import Rotation
 
-from hybrid_control.controllers.ik_qp.config import IKQPConfig
+from hybrid_control.utils.control_utils import IKQPConfig
 from hybrid_control.controllers.ik_qp.ik_qp import DEFAULT_URDF, build_model
 from hybrid_control.controllers.ik_qp.parallel import ParallelPinkIK, physical_cpus
 from hybrid_control.robots.state import Pose

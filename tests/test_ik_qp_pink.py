@@ -13,7 +13,7 @@ from scipy.spatial.transform import Rotation
 pin = pytest.importorskip("pinocchio")
 pytest.importorskip("pink")
 
-from hybrid_control.controllers.ik_qp.config import IKQPConfig, PoseTarget
+from hybrid_control.utils.control_utils import IKQPConfig, TaskSpaceTarget
 from hybrid_control.controllers.ik_qp.ik_qp import DEFAULT_URDF, PinkInverseKinematicsController, build_model
 from hybrid_control.controllers.ik_qp.ik_qp_mujoco import InverseKinematicsController
 from hybrid_control.robots.model import RobotModel
@@ -26,6 +26,10 @@ FRAME = "panda_hand"
 
 class PinocchioRobot(RobotModel):
     """Read-only RobotModel on the URDF; fingers fixed at 0, base at world pose T_world_base."""
+
+    @property
+    def control_mode(self):
+        return "position"
 
     def __init__(self, q, base: pin.SE3):
         self.model = pin.buildModelFromUrdf(str(DEFAULT_URDF))
@@ -71,7 +75,7 @@ def make_config(dq_max=20.0, damping=1e5):
 def perturbed_target(robot, rng, scale):
     pose = robot.get_pose(FRAME)
     rotation = Rotation.from_rotvec(rng.normal(size=3) * scale) * Rotation.from_quat(np.array(pose.quaternion))
-    return PoseTarget(FRAME, Pose(pose.position + rng.normal(size=3) * scale, rotation.as_quat()))
+    return TaskSpaceTarget(FRAME, Pose(pose.position + rng.normal(size=3) * scale, rotation.as_quat()))
 
 
 BASE = pin.SE3(Rotation.from_euler("z", 0.7).as_matrix(), np.array([0.4, -0.3, 0.1]))
@@ -156,5 +160,18 @@ def test_tracks_extra_frame(solver):
     rotation = Rotation.from_quat(np.array(hand.quaternion))
     tcp = Pose(hand.position + rotation.apply(np.array(TCP_OFFSET.position)), hand.quaternion)
     controller = PinkInverseKinematicsController(robot, make_config(), solver=solver, extra_frames=frames)
-    command = controller.compute(PoseTarget("tcp", tcp), DT)
+    command = controller.compute(TaskSpaceTarget("tcp", tcp), DT)
     np.testing.assert_allclose(command.positions, robot.get_state().positions, atol=1e-9)
+
+
+def test_pink_rejects_nonposition_model_before_solver_setup():
+    from hybrid_control.controllers.ik_qp.parallel import ArrayRobotModel
+
+    class TorqueArrayModel(ArrayRobotModel):
+        @property
+        def control_mode(self):
+            return "torque"
+
+    robot = TorqueArrayModel(ARM_JOINTS, "panda_link0")
+    with pytest.raises(ValueError, match="requires control_mode='position'.*control_mode='torque'"):
+        PinkInverseKinematicsController(robot, None, solver="not-a-solver")
