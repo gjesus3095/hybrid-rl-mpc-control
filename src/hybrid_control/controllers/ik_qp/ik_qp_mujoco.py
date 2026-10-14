@@ -6,6 +6,7 @@ from hybrid_control.controllers.ik_qp.config import IKQPConfig, PoseTarget
 from hybrid_control.robots.model import RobotModel
 from hybrid_control.robots.state import JointPositionCommand
 from hybrid_control.utils.math_helpers import MathHelpers
+from hybrid_control.utils.osqp_utils import suppress_c_stdout
 
 # ==================================================================================================
 # DIFF INVERSE KINEMATICS CONTROLLER (QP)
@@ -52,7 +53,8 @@ class InverseKinematicsController(Controller[PoseTarget, JointPositionCommand], 
         prob = osqp.OSQP()
         prob.setup(P=P, q=q, A=A, u=ub, l=lb, verbose=False, polish=True)
 
-        res = prob.solve()
+        with suppress_c_stdout():
+            res = prob.solve()
 
         # Check solver status (1=solved, 2=solved_inaccurate)
         if res.info.status_val not in (1, 2):

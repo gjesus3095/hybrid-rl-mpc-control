@@ -50,8 +50,8 @@ class QuinticTrajectory:
         self.start = start
         self.goal = goal
         self.duration = float(duration)
-        self._start_rotation = Rotation.from_quat(start.quaternion)
-        relative = Rotation.from_quat(goal.quaternion) * self._start_rotation.inv()
+        self._start_rotation = Rotation.from_quat(np.array(start.quaternion))
+        relative = Rotation.from_quat(np.array(goal.quaternion)) * self._start_rotation.inv()
         self._rotation_vector = relative.as_rotvec()  # Shortest rotation, world frame.
         self._displacement = goal.position - start.position
 

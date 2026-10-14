@@ -12,20 +12,20 @@ license-files = [
     "src/hybrid_control/sim_interfaces/mujoco/models/panda/LICENSE",
     "docs/licenses/IsaacLab-LICENSE",
 ]
-requires-python = ">=3.10,<3.12"
+requires-python = ">=3.10"
 dependencies = [
-    "numpy~=1.23.5",
-    "pandas~=2.0.3",
-    "scipy~=1.9.3",
-    "matplotlib~=3.10.0",
-    "osqp~=0.6.7",
-    "mujoco~=3.2.7",
+    "numpy>=1.23",
+    "pandas>=2.0",
+    "scipy>=1.9",
+    "matplotlib>=3.7",
+    "osqp>=0.6.7",
+    "mujoco>=3.2",
 ]
 
 [project.optional-dependencies]
 isaac = [
-    "pin-pink",
-    "qpsolvers<4.9",  # 4.9+ needs osqp>=1.0; ik_qp_mujoco uses the osqp 0.6 API
+    "pin-pink==3.3.0",  # Isaac Lab 3.0 pins this; >=3.4 requires pin>=4 which upgrades pinocchio
+    "qpsolvers>=4.0",
     "daqp==0.8.5",  # same pin as Isaac Lab (its pyproject: ">0.8.5 changes behavior")
 ]
 

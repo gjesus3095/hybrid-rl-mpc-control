@@ -6,125 +6,70 @@ The initial setup consists of a **3-DoF planar base (X, Y, yaw)** controlled exc
 
 The long-term goal is to extend this architecture to **humanoid whole-body control**, combining RL-based balancing and locomotion with precise model-based manipulation.
 
-## Imported Panda Model and Controller
-
-The Panda model and controller were imported from `../hybrid_push_control_panda`:
-
-- [Panda model](src/hybrid_control/sim_interfaces/mujoco/models/panda/panda.xml) and [simulation scene](src/hybrid_control/sim_interfaces/mujoco/models/panda/scene.xml), including robot meshes and model variants. The scene includes a ground plane at world Z = 0 with a repeating grid texture. Tables, loose objects, and furniture textures have been removed.
-- [IK/QP controller](src/hybrid_control/controllers/ik_qp/ik_qp_mujoco.py), including its admittance and low-pass filters.
-- [Math helpers](src/hybrid_control/utils/math_helpers.py) required by the controller.
-
-The controller computes commands through a simulator-independent `RobotModel` interface. `MujocoRobotModel` wraps an existing simulation using explicit joint-to-actuator mappings, and the generic `Controller` base supports future controllers. See [model and controller interfaces](docs/model_controller_interfaces.md) for conventions and usage.
-
 ## Setup
 
-Use Python 3.10 or 3.11. Test dependencies (`pytest`) are in a dependency group and are included by default with `uv sync`. The Pink IK/QP controller (`controllers/ik_qp/ik_qp.py`) needs the `isaac` extra: `uv sync --extra isaac`. It uses a temporary copy of Isaac Lab's Franka URDF until the Isaac Lab 3 (Python 3.12) requirement is resolved. Solvers `osqp` and `daqp` are supported; see [IK/QP with Pink](docs/ik_qp_pink.md) for the comparison and open items.
+### uv-managed environment (Python 3.10 / 3.11)
 
 ```bash
 uv sync
 uv run pytest -q
 ```
 
-Alternatively, install with `python -m pip install -e '.[test]'` and run `pytest -q`.
+The `isaac` extra installs Pink IK/QP dependencies (`uv sync --extra isaac`). If a sourced ROS environment injects incompatible pytest plugins via `PYTHONPATH`, prefix with `env -u PYTHONPATH`.
 
-If a sourced ROS environment injects incompatible pytest plugins through `PYTHONPATH`, run `env -u PYTHONPATH uv run pytest -q`.
+### Isaac Lab 3.0 / Isaac Sim 6.1 (Python 3.12)
 
-## IK/QP Tracking Experiment
+This workflow installs the project into an existing Isaac Lab virtual environment in editable mode. Isaac Lab already provides all required dependencies, so the install adds only the editable package entry.
 
-`scripts/mujoco/qp_controller/track_targets.py` runs the Panda arm through seeded Cartesian pose targets and reports tracking errors.
-
-```bash
-uv run python scripts/mujoco/track_targets.py
-```
-
-Edit the **Configuration & Constants** block at the top of the script; there are no command-line options:
-
-- `SHOW_VIEWER`: set `True` for the interactive view; red sphere marks the position target, green sphere tracks the robot's world CoM. `COM_MARKER_DIAMETER` sets its diameter (default 5 cm).
-- `Q_INIT`: seven initial arm joint angles in radians; actuator commands start at the same pose.
-- `TRACKING_SECONDS`: simulated seconds allowed per reference before checking accuracy, rounded up to a whole control interval.
-- `TARGET_RADIUS` and `RANDOM_SEED`: reproducible XYZ offsets around the starting hand position, defaulting to ±10 cm per axis.
-- `N_TARGETS`: total references, including the reference orientation at the start and end (default 5).
-- `ROTATION_ORDER`, `ORIENTATION_CENTER_DEG`, and `ORIENTATION_RANGE_DEG`: random Euler-angle targets around a reference orientation, with independent uniform offsets of ±40°, ±30°, and ±40°. The default `zyx` order means extrinsic rotations about fixed world Z, Y, and X axes. `RANDOM_SEED` reproduces both positions and orientations; the first and last orientations equal `ORIENTATION_CENTER_DEG`.
-- `DT_CTRL`, gains, weights, velocity limits, and acceptance thresholds: controller and assertion settings.
-
-Each reference runs for five simulated seconds by default, with control at 50 Hz and MuJoCo at 500 Hz. Assertions require position error below 5 mm, orientation error below 0.03 rad, and joint commands/states within limits, allowing solver and actuator tolerances. Failures report the target, seed, elapsed simulation time, and measured values versus limits. Joint bias-force compensation is enabled. Large offsets or different initial poses may produce unreachable references; the same tracking assertions apply.
-
-## Base Disturbance Experiment
-
-`scripts/mujoco/qp_controller/base_disturbance.py` tests whether the IK/QP controller can maintain a fixed world-frame end-effector pose while the robot base moves in X/Y/Yaw.
-
-`MujocoModifier.build_mobile_base_spec` adds three DOFs to `link0` via `MjSpec`: two prismatic joints (X, Y) and one hinge joint (Yaw around Z). All three are outside the IK — they act as a disturbance. The IK/QP compensates purely through arm motion.
+**Requirements:** `uv` on `PATH`, Isaac Lab installed and its Python interpreter known.
 
 ```bash
-uv run python scripts/mujoco/base_disturbance.py
+export ISAACLAB_PYTHON=~/workspace/IsaacLab/.venv/bin/python   # adjust to your path
+bash scripts/isaac/setup_isaaclab_env.sh
+bash scripts/isaac/validate_isaaclab_env.sh
 ```
 
-Configuration at the top of the script:
-
-- `BASE_MOTION_RADIUS`: max XY command per axis in metres (default 0.2 m; scene limits ±2 m).
-- `BASE_YAW_RADIUS`: max yaw command in radians (default π/6).
-- `N_BASE_POSITIONS`: number of random waypoints.
-- `RANDOM_SEED`: reproducible waypoints.
-- `SHOW_VIEWER`: set `True` for the interactive view.
-
-Note: base displacements that push the world-frame target outside the arm workspace report FAIL with a large position error.
-
-## Interactive Base Disturbance
-
-`scripts/mujoco/qp_controller/base_disturbance_keyboard.py` runs the same experiment interactively with keyboard control.
+`setup_isaaclab_env.sh` snapshots the environment before and after, and passes the before-snapshot as a constraints file so no pre-existing package is upgraded. To uninstall:
 
 ```bash
-uv run python scripts/mujoco/base_disturbance_keyboard.py
+bash scripts/isaac/cleanup_isaaclab_env.sh
 ```
 
-| Key | Action |
-|-----|--------|
-| `← / →` | base X (left / right) |
-| `↑ / ↓` | base Y (forward / back) |
-| `Space` | base Yaw CCW (+Z) |
-| `AltGr` | base Yaw CW (−Z) |
+Packages upgraded during setup are reported but not automatically restored; the before-snapshot (`logs/isaaclab_snapshot_before.txt`) records their original versions.
 
-The EE target is fixed at the initial grasp world-frame pose. The arm must compensate for all base motion purely through joint motion.
+## Running scripts
 
-## Torque-Level Impedance Control
-
-`src/hybrid_control/controllers/impedance/impedance_control.py` implements a task-space impedance controller that commands joint torques. The full QP formulation and the options are documented in the [impedance controller README](src/hybrid_control/controllers/impedance/README.md). Each control step solves an inverse-dynamics QP with OSQP over `z = [ddq, tau]`:
-
-```text
-min   || ddx_des - (J ddq + dJ dq) ||²_W + λ_ddq || ddq - ddq_posture ||² + λ_tau || tau ||²
-s.t.  [M, -I] [ddq; tau] = -h
-      ddq_min <= ddq <= ddq_max
-      tau_min <= tau <= tau_max
-
-ddx_des = ddx_ref + Kp (x_ref - x) + Kd (dx_ref - dx)
-```
-
-- `M` is the joint-space inertia (including armature), and `h = qfrc_bias - qfrc_passive` (Coriolis, gravity, joint damping). Gravity compensation comes out of the equality constraint.
-- The orientation error is the world-frame rotation vector of `R_ref Rᵀ`. Damping defaults to critical (`2√Kp`).
-- The Tikhonov term pulls `ddq` towards `posture_kp (q_posture - q) - posture_kd dq`, which stabilizes the 7-DoF null space. Both posture gains set to zero reduce it to plain `λ_ddq ||ddq||²`.
-- Torque bounds are always intersected with the actuator limits.
-- Optional null-space posture torque, added after the QP: `tau += N (P (q_mid - q) - D dq)` with `N = I - Jᵀ Λ J M⁻¹` and `Λ = (J M⁻¹ Jᵀ)⁻¹`. It moves only the arm's redundant DoF (the elbow swivel) and leaves the hand untouched. Enable it with `nullspace_posture`, and set the QP posture gains to zero so the two don't compete.
-
-`MujocoModifier.build_torque_spec` converts the Panda position servos into unit-gain torque motors (bounded by their force range), and `MujocoTorqueRobotModel` exposes the dynamics through the `TorqueRobotModel` interface. Reference trajectories (`QuinticTrajectory`, `SinusoidalTrajectory`) are in `src/hybrid_control/utils/trajectories.py`.
+All MuJoCo scripts use the uv-managed environment:
 
 ```bash
-uv run python scripts/mujoco/impedance_tracking.py
+uv run python scripts/mujoco/qp_controller/track_targets.py
 ```
 
-Configuration at the top of the script:
+Isaac Lab scripts use the Isaac Lab interpreter:
 
-- `TRAJECTORY`: `"quintic"` (rest-to-rest segments through `N_WAYPOINTS` seeded waypoints, then back home) or `"sine"` (per-axis `SINE_AMPLITUDE`/`SINE_FREQUENCY_HZ`).
-- `KP_POS`, `KP_ORI`, `KD_POS`, `KD_ORI`, weights, regularization and `POSTURE_KP`.
-- `TAU_MAX`, `DDQ_MAX`: Franka datasheet torque and acceleration limits.
-- `DT_CTRL`: 2 ms by default, so torques are updated every physics step.
-- `USE_NULLSPACE`, `Q_MID`, `P_NULLSPACE`, `D_NULLSPACE`: null-space posture torque (on by default, `P = 10`, `D = 1`).
-- `SAVE_PLOT`: a PNG path for reference vs. actual position and torques.
+```bash
+$ISAACLAB_PYTHON scripts/isaac/base_disturbance_keyboard.py
+```
 
-Each segment must end within 5 mm / 0.03 rad and stay within 20 mm while moving. The sine reference starts at full speed from rest, so its first ~0.2 s shows a transient of about 10 mm.
+See [scripts/README.md](scripts/README.md) for all scripts, their configuration constants, and key-binding tables.
+
+## Controllers
+
+### IK/QP (differential, position-level)
+
+`src/hybrid_control/controllers/ik_qp/` — solves a velocity-level QP at each control step and integrates to a joint-position command. See the [IK/QP README](src/hybrid_control/controllers/ik_qp/README.md) for the formulation, solver comparison (OSQP vs DAQP), and open items.
+
+### Impedance (inverse-dynamics, torque-level)
+
+`src/hybrid_control/controllers/impedance/` — solves an inverse-dynamics QP over `z = [ddq, tau]` each step with optional null-space posture torque. See the [impedance controller README](src/hybrid_control/controllers/impedance/README.md) for the full QP formulation and parameter reference.
+
+## Interfaces
+
+The controller computes commands through a simulator-independent `RobotModel` interface. `MujocoRobotModel` wraps an existing simulation using explicit joint-to-actuator mappings. See [docs/model_controller_interfaces.md](docs/model_controller_interfaces.md) for conventions and usage.
 
 ## Project Structure
 
-Implemented files are unmarked; planned files are marked `[planned]`. Empty directories exist locally but are not tracked by Git.
+Implemented files are unmarked; planned files are marked `[planned]`.
 
 ```text
 hybrid-rl-ik-control/
@@ -182,15 +127,23 @@ hybrid-rl-ik-control/
 │           └── transforms.py             [planned]
 │
 ├── scripts/
+│   ├── README.md                          all script descriptions and configuration
 │   ├── mujoco/
-│   │   ├── track_targets.py
-│   │   ├── base_disturbance.py
+│   │   ├── qp_controller/
+│   │   │   ├── track_targets.py
+│   │   │   ├── base_disturbance.py
+│   │   │   └── base_disturbance_keyboard.py
+│   │   └── impedance_controller/
+│   │       ├── impedance_tracking.py
+│   │       ├── impedance_track_targets.py
+│   │       ├── impedance_keyboard.py
+│   │       └── impedance_singularity.py
+│   ├── isaac/
 │   │   ├── base_disturbance_keyboard.py
-│   │   ├── impedance_tracking.py
-│   │   └── test_trajectory.py            [planned]
-│   ├── isaac/                            [planned]
-│   │   ├── test_ik.py
-│   │   └── compare_jacobians.py
+│   │   ├── base_disturbance_impedance.py
+│   │   ├── setup_isaaclab_env.sh
+│   │   ├── validate_isaaclab_env.sh
+│   │   └── cleanup_isaaclab_env.sh
 │   └── rl/                               [planned]
 │       ├── train.py
 │       └── evaluate.py

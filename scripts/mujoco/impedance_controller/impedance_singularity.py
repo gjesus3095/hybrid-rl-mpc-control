@@ -31,6 +31,7 @@ from hybrid_control.controllers.impedance.impedance_control import (
 )
 from hybrid_control.robots.state import Pose
 from hybrid_control.utils.logger import logger
+from hybrid_control.sim_interfaces.mujoco.modifier import MujocoModifier
 from hybrid_control.utils.trajectories import QuinticTrajectory
 from impedance_tracking import (
     DDQ_MAX,
@@ -38,7 +39,6 @@ from impedance_tracking import (
     Q_INIT,
     TAU_MAX,
     create_simulation,
-    draw_reference,
     pose_error,
 )
 
@@ -154,7 +154,7 @@ def run(*, viewer=False):
                 log["desired_norm"].append(np.linalg.norm(solution.desired_task_acceleration[:3]))
                 log["achieved_norm"].append(np.linalg.norm(achieved[:3]))
                 if handle is not None:
-                    draw_reference(handle, sample.pose.position)
+                    MujocoModifier.draw_reference(handle, sample.pose.position)
                     handle.sync()
                     time.sleep(max(0.0, dt - (time.perf_counter() - started)))
 

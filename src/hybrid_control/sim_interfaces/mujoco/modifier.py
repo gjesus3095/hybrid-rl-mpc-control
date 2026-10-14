@@ -64,7 +64,7 @@ class MujocoModifier:
         if handle is None:
             return
         com = robot.get_com_state()
-        target_rot = Rotation.from_quat(target_pose.quaternion).as_matrix()
+        target_rot = Rotation.from_quat(np.array(target_pose.quaternion)).as_matrix()
         with handle.lock():
             handle.user_scn.ngeom = 9
             _draw_frame(handle.user_scn, 0, np.zeros(3), np.eye(3),
@@ -77,6 +77,19 @@ class MujocoModifier:
                 np.array([0.2, 1, 0.3, 0.7], dtype=np.float32),
             )
             handle.user_scn.geoms[8].label = "CoM"
+
+    @staticmethod
+    def draw_reference(handle, position: np.ndarray) -> None:
+        """Draw a sphere at *position* in the viewer's user scene. No-op when handle is None."""
+        if handle is None:
+            return
+        with handle.lock():
+            mujoco.mjv_initGeom(
+                handle.user_scn.geoms[8], mujoco.mjtGeom.mjGEOM_SPHERE,
+                np.full(3, 0.02), np.array(position), np.eye(3).ravel(),
+                np.array([1.0, 0.2, 0.2, 0.8]),
+            )
+            handle.user_scn.ngeom = max(handle.user_scn.ngeom, 9)
 
     @staticmethod
     def build_mobile_base_spec(xml_file: str, base_range: float = 2.0,

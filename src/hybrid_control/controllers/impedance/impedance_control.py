@@ -7,6 +7,7 @@ from hybrid_control.controllers.base import Controller
 from hybrid_control.robots.model import TorqueRobotModel
 from hybrid_control.robots.state import JointTorqueCommand, Pose
 from hybrid_control.utils.manipulability import ROWS as MANIPULABILITY_ROWS, manipulability_gradient
+from hybrid_control.utils.osqp_utils import suppress_c_stdout
 from hybrid_control.utils.trajectories import CartesianSample
 
 # ==================================================================================================
@@ -299,7 +300,8 @@ class ImpedanceController(Controller[TaskSpaceTarget, JointTorqueCommand]):
             )
         else:
             self._solver.update(Px=Px, Ax=Ax, q=f, l=lower, u=upper)
-        result = self._solver.solve()
+        with suppress_c_stdout():
+            result = self._solver.solve()
         # Check solver status (1=solved, 2=solved_inaccurate)
         if result.info.status_val not in (1, 2):
             self._solver = None  # Do not warm-start from a failed solve.
@@ -319,7 +321,7 @@ class ImpedanceController(Controller[TaskSpaceTarget, JointTorqueCommand]):
 
         position_error = target.pose.position - pose.position
         orientation_error = (
-            Rotation.from_quat(target.pose.quaternion) * Rotation.from_quat(pose.quaternion).inv()
+            Rotation.from_quat(np.array(target.pose.quaternion)) * Rotation.from_quat(np.array(pose.quaternion)).inv()
         ).as_rotvec()
         velocity_error = target.velocity - twist
         return target.acceleration + np.hstack([
