@@ -319,8 +319,7 @@ class ImpedanceController(Controller[TaskSpaceTarget, JointTorqueCommand]):
 
         position_error = target.pose.position - pose.position
         orientation_error = (
-            # np.array copies: scipy >= 1.17 rejects the read-only Pose arrays
-            Rotation.from_quat(np.array(target.pose.quaternion)) * Rotation.from_quat(np.array(pose.quaternion)).inv()
+            Rotation.from_quat(target.pose.quaternion) * Rotation.from_quat(pose.quaternion).inv()
         ).as_rotvec()
         velocity_error = target.velocity - twist
         return target.acceleration + np.hstack([

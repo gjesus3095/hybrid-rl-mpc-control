@@ -38,6 +38,17 @@ def jacobian_hessian(jacobian: np.ndarray) -> np.ndarray:
         angular_linear[np.minimum.outer(index, index), np.maximum.outer(index, index)],
         np.where(upper, angular_angular, 0.0),
     ], axis=2)  # [i, j, :] = dJ[:, j] / dq_i
+
+    # n = jacobian.shape[1]
+    # hessian = np.zeros((n, 6, n))
+    # for i in range(n):
+    #     for j in range(n):
+    #         a, b = min(i, j), max(i, j)
+    #         hessian[i, :3, j] = np.cross(angular[a], linear[b])
+    #         if i < j:
+    #             hessian[i, 3:, j] = np.cross(angular[i], angular[j])
+    # return hessian
+
     return pairs.transpose(0, 2, 1)
 
 
