@@ -152,7 +152,7 @@ See [`docs/isaac_base_disturbance.md`](../docs/isaac_base_disturbance.md) for fu
 Keyboard-driven Ridgeback base with Pink IK/QP holding the Franka TCP.
 
 ```bash
-$ISAACLAB_PYTHON scripts/isaac/base_disturbance_keyboard.py
+$ISAACLAB_PYTHON scripts/isaac/base_disturbance_keyboard.py --viz kit
 ```
 
 ### `base_disturbance_impedance.py`
@@ -160,5 +160,5 @@ $ISAACLAB_PYTHON scripts/isaac/base_disturbance_keyboard.py
 Same base-disturbance experiment with the torque-level impedance QP (default: `--control_hz 50`, `--physics_hz 200`).
 
 ```bash
-$ISAACLAB_PYTHON scripts/isaac/base_disturbance_impedance.py
+$ISAACLAB_PYTHON scripts/isaac/base_disturbance_impedance.py --viz kit
 ```
