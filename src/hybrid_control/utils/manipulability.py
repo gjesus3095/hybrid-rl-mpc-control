@@ -29,15 +29,27 @@ def jacobian_hessian(jacobian: np.ndarray) -> np.ndarray:
     if jacobian.ndim != 2 or jacobian.shape[0] != 6:
         raise ValueError("jacobian must have shape (6, n)")
     linear, angular = jacobian[:3].T, jacobian[3:].T  # (n, 3) each
-    n = jacobian.shape[1]
-    hessian = np.zeros((n, 6, n))
-    for i in range(n):
-        for j in range(n):
-            a, b = min(i, j), max(i, j)
-            hessian[i, :3, j] = np.cross(angular[a], linear[b])
-            if i < j:
-                hessian[i, 3:, j] = np.cross(angular[i], angular[j])
-    return hessian
+    index = np.arange(jacobian.shape[1])
+    # All pairwise cross products at once (vectorized: called every control step)
+    angular_linear = np.cross(angular[:, None], linear[None, :])  # [a, b] = z_a x v_b
+    angular_angular = np.cross(angular[:, None], angular[None, :])  # [i, j] = z_i x z_j
+    upper = (index[:, None] < index[None, :])[..., None]
+    pairs = np.concatenate([
+        angular_linear[np.minimum.outer(index, index), np.maximum.outer(index, index)],
+        np.where(upper, angular_angular, 0.0),
+    ], axis=2)  # [i, j, :] = dJ[:, j] / dq_i
+
+    # n = jacobian.shape[1]
+    # hessian = np.zeros((n, 6, n))
+    # for i in range(n):
+    #     for j in range(n):
+    #         a, b = min(i, j), max(i, j)
+    #         hessian[i, :3, j] = np.cross(angular[a], linear[b])
+    #         if i < j:
+    #             hessian[i, 3:, j] = np.cross(angular[i], angular[j])
+    # return hessian
+
+    return pairs.transpose(0, 2, 1)
 
 
 def manipulability(jacobian: np.ndarray, rows: str = "position") -> float:

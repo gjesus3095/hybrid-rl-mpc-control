@@ -27,11 +27,20 @@ Hybrid controller for a 3-DoF planar mobile base (RL) + 7-DoF Franka Panda arm (
 - `src/hybrid_control/robots/state.py` — `JointState`, `CenterOfMassState`, `Pose` (xyzw quat), `JointPositionCommand`; all validate on construction
 - `src/hybrid_control/sim_interfaces/mujoco/adapter.py` — `MujocoRobotModel`: wraps `MjModel`/`MjData` with `joint_actuator_pairs`; exposes `from_xml_path` + `initialize`
 - `src/hybrid_control/controllers/base.py` — `Controller[TargetT, CommandT]` ABC: `compute(target, dt)`, `reset()`
-- `src/hybrid_control/controllers/ik_qp/controller.py` — `InverseKinematicsController(robot, IKQPConfig)` with `PoseTarget`; QP-based velocity solver integrates to position command
+- `src/hybrid_control/controllers/ik_qp/config.py` — `PoseTarget`, `IKQPConfig` shared by both IK/QP controllers
+- `src/hybrid_control/controllers/ik_qp/ik_qp_mujoco.py` — `InverseKinematicsController(robot, IKQPConfig)`; QP (OSQP) on the robot's Jacobian, integrates to position command
+- `src/hybrid_control/controllers/ik_qp/ik_qp.py` — `PinkInverseKinematicsController(robot, IKQPConfig)`; same QP solved with Pink on the Isaac Lab Franka URDF (Isaac Lab joint/frame names, `uv sync --extra isaac`)
+- `src/hybrid_control/controllers/ik_qp/parallel.py` — `ParallelPinkIK`: batched Pink IK/QP over forked CPU worker processes (create before Isaac Sim starts, then `configure`; `num_workers=0` = sequential); benchmark: `scripts/benchmark_parallel_ik.py`
+- `src/hybrid_control/sim_interfaces/isaac/adapter.py` — `IsaacArticulationBuffer` (one GPU↔CPU copy per control step) + `IsaacRobotModel` per env view; runs in `~/IsaacLab/.venv` via `PYTHONPATH=src`
+- `scripts/isaac/base_disturbance_keyboard.py` — keyboard-driven Ridgeback base, Pink IK/QP holds the TCP (`docs/isaac_base_disturbance.md`)
+- `src/hybrid_control/controllers/impedance/impedance_control.py` — `ImpedanceController(TorqueRobotModel, ImpedanceQPConfig)`: main's inverse-dynamics impedance QP (OSQP) with null-space posture torque and manipulability floor (`utils/manipulability.py`); see its README
+- `IsaacDynamicsBuffer` + `IsaacTorqueRobotModel` (same `isaac/adapter.py`) — mass matrix, gravity + Coriolis forces, Jacobians and effort targets from PhysX for torque control
+- `scripts/isaac/base_disturbance_impedance.py` — same Ridgeback test with the torque-level impedance QP (`--control_hz` 50, `--physics_hz` 200 by default)
+- `src/hybrid_control/sim_interfaces/isaac/assets/franka/lula_franka_gen.urdf` — temporary copy of Isaac Lab's Franka URDF (see `ik_qp.py` docstring)
 - `src/hybrid_control/utils/math_helpers.py` — math utilities for kinematics
 - `src/hybrid_control/sim_interfaces/mujoco/models/panda/` — Panda XML model + meshes
 
-**Planned (not yet implemented):** RL policy/observations, Isaac adapter, Isaac Lab env configs, `integration/hybrid_controller.py`, trajectory utilities.
+**Planned (not yet implemented):** RL policy/observations, Isaac Lab env configs, `integration/hybrid_controller.py`, trajectory utilities.
 
 ## Key Conventions
 

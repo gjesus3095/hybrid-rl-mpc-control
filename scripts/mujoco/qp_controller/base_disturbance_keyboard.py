@@ -22,7 +22,7 @@ import numpy as np
 
 from hybrid_control.sim_interfaces.mujoco.adapter import MujocoRobotModel
 from hybrid_control.sim_interfaces.mujoco.modifier import MujocoModifier
-from hybrid_control.controllers.ik_qp.controller import (
+from hybrid_control.controllers.ik_qp.ik_qp_mujoco import (
     IKQPConfig,
     InverseKinematicsController,
     PoseTarget,

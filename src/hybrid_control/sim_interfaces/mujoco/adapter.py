@@ -155,9 +155,8 @@ class MujocoRobotModel(RobotModel):
             joint_id = self._name_id(mujoco.mjtObj.mjOBJ_JOINT, name)
             if name in self.joint_names:
                 raise ValueError(f"Extra joint {name!r} overlaps the selected joints")
-            if self.model.jnt_type[joint_id] not in (
-                mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE,
-            ):
+            jt = self.model.jnt_type[joint_id]
+            if jt != mujoco.mjtJoint.mjJNT_HINGE and jt != mujoco.mjtJoint.mjJNT_SLIDE:
                 raise ValueError(f"Extra joint {name!r} must be a scalar hinge or slide")
             lower, upper = self.model.jnt_range[joint_id]
             if not np.isfinite(value) or (
@@ -206,7 +205,8 @@ class MujocoRobotModel(RobotModel):
         model = self.model
         joint_name = model.joint(joint_id).name
         actuator_name = model.actuator(actuator_id).name
-        if model.jnt_type[joint_id] not in (mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE):
+        jt = model.jnt_type[joint_id]
+        if jt != mujoco.mjtJoint.mjJNT_HINGE and jt != mujoco.mjtJoint.mjJNT_SLIDE:
             raise ValueError(f"Joint {joint_name!r} must be a scalar hinge or slide")
         if (
             model.actuator_trntype[actuator_id] != mujoco.mjtTrn.mjTRN_JOINT
