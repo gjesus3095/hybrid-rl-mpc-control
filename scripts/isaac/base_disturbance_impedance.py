@@ -1,19 +1,20 @@
-"""Isaac Lab: the keyboard moves the Ridgeback base (stand-in for the RL base action) while main's
+"""Isaac Lab: the keyboard moves the Ridgeback base (stand-in for the RL base action) while the
 torque-level impedance QP (``controllers/impedance``) keeps the Franka TCP (``panda_fingertip_centered``)
-on a world-frame path, with null-space posture torque and a manipulability floor against singularities.
+on a world-frame pose target, with null-space posture torque and a manipulability floor.
 
-Per control step (``--control_hz``, default 50 Hz; main's MuJoCo scripts use 500 Hz), for all environments:
+Per control step (``--control_hz``, default 50 Hz), for all environments:
     1. read the simulator state and dynamics once (GPU -> CPU) and the base command (keyboard or
-       ``--schedule``); at 25 Hz update the markers and render (and record a ``--record`` frame);
+       ``--schedule``);
     2. solve each environment's QP on the CPU, with the commanded base twist as feedforward: the
-       controller only sees the arm joints, so the base-induced TCP velocity/acceleration go into the target;
-    3. write base velocity and arm effort targets together (CPU -> GPU), then step physics
+       controller sees only the arm joints, so base-induced TCP velocity and acceleration enter as
+       target corrections; a failed QP falls back to gravity/Coriolis compensation;
+    3. at 25 Hz (every ``control_hz / 25`` steps): update the markers, render, and capture a
+       ``--record`` frame;
+    4. write base velocity and arm effort targets together (CPU -> GPU), then step physics
        ``--physics_hz / --control_hz`` times (default 200 / 50 = 4) with the torques held.
 
-Main's gains are kept: at 50 Hz they track as well as at 500 Hz (0.06 mm steady error at 0.3 m/s).
-
-The arm's implicit PD gains are zeroed (pure effort control) and gravity is on: the QP compensates it.
-Commands to run: ``docs/isaac_base_disturbance.md``.
+The arm's implicit PD gains are zeroed (pure effort control); the QP compensates gravity.
+Run commands: ``docs/isaac_base_disturbance.md``.
 """
 
 import argparse

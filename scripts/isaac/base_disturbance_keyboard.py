@@ -1,17 +1,18 @@
 """Isaac Lab: the keyboard moves the Ridgeback base (stand-in for the RL base action) while the
-Pink IK/QP keeps the Franka TCP (``panda_fingertip_centered``) on a world-frame path.
+Pink IK/QP (``controllers/ik_qp``) keeps the Franka TCP (``panda_fingertip_centered``) on a
+world-frame pose target.
 
-Per 50 Hz control step, for all environments:
-    1. read the simulator state once (GPU -> CPU) and the base command (keyboard or ``--schedule``),
-       update the markers and render (and record a ``--record`` frame);
-    2. predict each ``panda_link0`` pose after the commanded base motion (the sim is not stepped);
-    3. solve each environment's QP against its predicted base pose (on the CPU: sequentially, or in
-       ``--workers`` processes that each solve a slice of the environments);
+Per 50 Hz control step (physics 200 Hz, 4 substeps), for all environments:
+    1. read the simulator state once (GPU -> CPU) and the base command (keyboard or ``--schedule``);
+       update the markers and render every step; record a ``--record`` frame at 25 fps (every 2nd step);
+    2. predict each ``panda_link0`` pose after the commanded base motion (the sim is not stepped yet);
+    3. solve each environment's QP against the predicted base pose (on the CPU: sequentially or in
+       ``--workers`` processes that each handle a slice of the environments);
     4. write base velocity and arm position (+ velocity feedforward) targets together (CPU -> GPU),
        then step physics 4x without rendering.
 
-Arm gravity is disabled, as in Isaac Lab's high-PD Franka config used for IK (the MuJoCo script
-compensates gravity instead). Commands to run: ``docs/isaac_base_disturbance.md``.
+Arm gravity is disabled, matching Isaac Lab's high-PD Franka config for IK. Run commands:
+``docs/isaac_base_disturbance.md``.
 """
 
 import argparse
