@@ -1,12 +1,16 @@
 """Read robot state and kinematics, and apply commands independently of a simulator."""
 
 from abc import ABC, abstractmethod
+from typing import Literal
 
 import numpy as np
 
 from hybrid_control.robots.state import (
-    CenterOfMassState, JointPositionCommand, JointState, JointTorqueCommand, Pose,
+    CenterOfMassState, JointPositionCommand, JointState, JointTorqueCommand, JointVelocityCommand, Pose,
 )
+
+
+ControlMode = Literal["position", "velocity", "torque"]
 
 
 class RobotModel(ABC):
@@ -16,6 +20,30 @@ class RobotModel(ABC):
     kinematics before reading and must not step concurrently with controller
     computation. Returned arrays must not alias simulator-owned memory.
     """
+
+    def __init__(self, *, expected_control_mode: ControlMode | None = None):
+        """Validate the model mode and, when supplied, the intended controller mode.
+
+        Subclasses must initialize mode-dependent state before calling this constructor.
+        """
+        self.validate_control_mode(self.control_mode)
+        if expected_control_mode is not None:
+            self.validate_control_mode(expected_control_mode)
+
+    @property
+    @abstractmethod
+    def control_mode(self) -> ControlMode:
+        """Accepted command mode for the selected joint group."""
+
+    def validate_control_mode(self, expected: ControlMode) -> None:
+        """Reject a controller mode incompatible with this model."""
+        if expected not in ("position", "velocity", "torque"):
+            raise ValueError(f"Unknown control mode: {expected!r}")
+        if self.control_mode != expected:
+            raise ValueError(
+                f"Controller requires control_mode={expected!r}, "
+                f"but {type(self).__name__} has control_mode={self.control_mode!r}"
+            )
 
     @property
     @abstractmethod
@@ -48,50 +76,35 @@ class RobotModel(ABC):
         """
 
     @abstractmethod
-    def apply_command(self, command: JointPositionCommand) -> None:
-        """Set selected position actuator references without stepping or clipping.
+    def apply_command(
+        self, command: JointPositionCommand | JointVelocityCommand | JointTorqueCommand,
+    ) -> None:
+        """Set selected actuator references matching control_mode without stepping or clipping.
 
         Commands must use exactly this model's joint names and order. Physics
         and actuator force/control limits remain the simulation's responsibility.
         """
 
-
-class TorqueRobotModel(RobotModel):
-    """Robot model whose selected joints are driven by direct torque (motor) actuators.
-
-    Adds the joint-space dynamics needed by torque-level controllers. All quantities
-    are restricted to the selected joints, in ``joint_names`` order, and satisfy
-
-        M(q) ddq + h(q, dq) = tau
-
-    where coupling to unselected DoFs (e.g. gripper fingers) is neglected.
-    """
-
     @property
-    @abstractmethod
     def torque_limits(self) -> tuple[np.ndarray, np.ndarray]:
-        """Lower and upper actuator torque limits (n,), N·m for hinges and N for slides."""
+        """Lower and upper direct-torque limits (n,), N·m for hinges and N for slides."""
+        raise NotImplementedError(f"{type(self).__name__} does not support direct torque limits")
 
-    @abstractmethod
     def get_mass_matrix(self) -> np.ndarray:
-        """Return the symmetric joint-space inertia matrix M(q), shape (n, n)."""
+        """Return selected joint-space inertia M(q), shape (n, n)."""
+        raise NotImplementedError(f"{type(self).__name__} does not provide a mass matrix")
 
-    @abstractmethod
     def get_nonlinear_forces(self) -> np.ndarray:
-        """Return h(q, dq) (n,): Coriolis, centrifugal and gravity minus passive forces."""
+        """Return h(q, dq) (n,): Coriolis, centrifugal and gravity minus passive forces.
 
-    @abstractmethod
+        M ddq + h = tau neglects coupling to unselected DoFs.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not provide nonlinear forces")
+
     def get_jacobian_derivative(self, frame_name: str) -> np.ndarray:
         """Return dJ/dt (6, n) for ``get_jacobian(frame_name)`` at the current state.
 
         ``get_jacobian_derivative(frame) @ dq`` is the twist acceleration bias, so the
         body's world acceleration is ``J ddq + dJ dq`` (m/s², rad/s²).
         """
-
-    @abstractmethod
-    def apply_command(self, command: JointTorqueCommand) -> None:
-        """Set selected motor torques without stepping or clipping.
-
-        Commands must use exactly this model's joint names and order. Actuator
-        control limits remain the simulation's responsibility.
-        """
+        raise NotImplementedError(f"{type(self).__name__} does not provide Jacobian derivatives")

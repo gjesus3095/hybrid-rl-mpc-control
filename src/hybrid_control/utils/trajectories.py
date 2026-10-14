@@ -5,21 +5,12 @@ velocity and acceleration (6,), ordered [linear, angular] like ``RobotModel``
 Jacobian rows. Units are metres, radians and seconds.
 """
 
-from dataclasses import dataclass
 
 import numpy as np
 from scipy.spatial.transform import Rotation
 
 from hybrid_control.robots.state import Pose
-
-
-@dataclass(frozen=True)
-class CartesianSample:
-    """Reference pose with world twist velocity (m/s, rad/s) and acceleration (m/s², rad/s²)."""
-
-    pose: Pose
-    velocity: np.ndarray
-    acceleration: np.ndarray
+from hybrid_control.utils.control_utils import CartesianSample
 
 
 def quintic_time_scaling(t: float, duration: float) -> tuple[float, float, float]:

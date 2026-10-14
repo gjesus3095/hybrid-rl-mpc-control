@@ -144,3 +144,45 @@ def test_torque_command_only_touches_its_env(no_warp):
     buffer = IsaacDynamicsBuffer(fake_dynamics(), ("j1", "j2"), jacobian_bodies=["hand"])
     IsaacTorqueRobotModel(buffer, env=1).apply_command(JointTorqueCommand(("j1", "j2"), np.array([3.0, 4.0])))
     np.testing.assert_allclose(buffer.efforts, [[0, 0], [3, 4]])
+
+
+def test_controller_modes_match_isaac_adapters(no_warp):
+    from hybrid_control.controllers.ik_qp.ik_qp_mujoco import InverseKinematicsController
+    from hybrid_control.utils.control_utils import IKQPConfig
+    from hybrid_control.controllers.impedance.impedance_control import ImpedanceController
+    from hybrid_control.utils.control_utils import ImpedanceQPConfig
+
+    position = IsaacRobotModel(IsaacArticulationBuffer(fake_articulation(), ("j1", "j2")), env=0)
+    torque = IsaacTorqueRobotModel(IsaacDynamicsBuffer(fake_dynamics(), ("j1", "j2"), ["hand"]), env=0)
+    ik = InverseKinematicsController(position, IKQPConfig([-1, -1], [1, 1]))
+    impedance = ImpedanceController(torque, ImpedanceQPConfig([-1, -1], [1, 1]))
+    assert ik.control_mode == position.control_mode == "position"
+    assert impedance.control_mode == torque.control_mode == "torque"
+    with pytest.raises(ValueError, match="requires control_mode='position'.*control_mode='torque'"):
+        InverseKinematicsController(torque, None)
+    with pytest.raises(ValueError, match="requires control_mode='torque'.*control_mode='position'"):
+        ImpedanceController(position, None)
+    for robot in (position, torque):
+        with pytest.raises(AttributeError):
+            robot.control_mode = "velocity"
+
+
+@pytest.mark.parametrize("model_type,mode", [
+    (IsaacRobotModel, "position"), (IsaacTorqueRobotModel, "torque"),
+])
+def test_model_constructor_validates_control_mode(model_type, mode):
+    # Construction needs no simulator reads, and rejects mismatches immediately.
+    assert model_type(None, 0, expected_control_mode=mode).control_mode == mode
+    other_mode = "torque" if mode == "position" else "position"
+    with pytest.raises(ValueError, match="Controller requires control_mode"):
+        model_type(None, 0, expected_control_mode=other_mode)
+    with pytest.raises(ValueError, match="Unknown control mode"):
+        model_type(None, 0, expected_control_mode="invalid")
+
+    class InvalidModeModel(model_type):
+        @property
+        def control_mode(self):
+            return "invalid"
+
+    with pytest.raises(ValueError, match="Unknown control mode"):
+        InvalidModeModel(None, 0)

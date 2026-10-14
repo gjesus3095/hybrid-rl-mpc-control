@@ -11,7 +11,8 @@ from scipy.spatial.transform import Rotation
 
 from hybrid_control.sim_interfaces.mujoco.adapter import MujocoRobotModel
 from hybrid_control.controllers.base import Controller
-from hybrid_control.controllers.ik_qp.ik_qp_mujoco import IKQPConfig, InverseKinematicsController, PoseTarget
+from hybrid_control.controllers.ik_qp.ik_qp_mujoco import InverseKinematicsController
+from hybrid_control.utils.control_utils import IKQPConfig, TaskSpaceTarget
 from hybrid_control.robots.model import RobotModel
 from hybrid_control.robots.state import CenterOfMassState, JointPositionCommand, JointState, Pose
 
@@ -59,7 +60,7 @@ def robot():
     data.ctrl[:] = [0.08, -0.2, 0.25]
     data.time = 1.25
     mujoco.mj_forward(model, data)
-    return MujocoRobotModel(model, data, PAIRS)
+    return MujocoRobotModel(model, data, PAIRS, control_mode="position")
 
 
 def test_state_and_limits_follow_named_joint_order(robot):
@@ -81,7 +82,7 @@ def test_state_and_limits_follow_named_joint_order(robot):
 
 
 def test_unlimited_joint_limits_are_infinite(robot):
-    other = MujocoRobotModel(robot.model, robot.data, [("unselected", "unused_servo")])
+    other = MujocoRobotModel(robot.model, robot.data, [("unselected", "unused_servo")], control_mode="position")
     lower, upper = other.position_limits
     assert lower[0] == -np.inf
     assert upper[0] == np.inf
@@ -105,14 +106,14 @@ def test_com_is_mass_weighted_over_robot_links_and_excludes_other_objects(robot)
 
 def test_com_root_can_be_explicit_and_must_contain_selected_joints(robot):
     subtree = MujocoRobotModel(
-        robot.model, robot.data, [("extension", "slide_servo")], root_body="slider",
+        robot.model, robot.data, [("extension", "slide_servo")], root_body="slider", control_mode="position",
     )
     np.testing.assert_allclose(
         subtree.get_com_state().position, robot.data.xipos[robot.model.body("slider").id],
     )
     for root in ("missing", "floating", "slider", "world"):
         with pytest.raises(ValueError, match="Unknown|root_body|non-world"):
-            MujocoRobotModel(robot.model, robot.data, PAIRS, root_body=root)
+            MujocoRobotModel(robot.model, robot.data, PAIRS, root_body=root, control_mode="position")
 
 
 @pytest.mark.parametrize("time, position", [
@@ -126,7 +127,7 @@ def test_com_state_rejects_invalid_snapshots(time, position):
 def test_load_and_initialize_panda_scene():
     scene = files("hybrid_control.sim_interfaces.mujoco.models.panda") / "scene.xml"
     robot = MujocoRobotModel.from_xml_path(
-        scene, [(f"joint{i}", f"actuator{i}") for i in range(1, 8)],
+        scene, [(f"joint{i}", f"actuator{i}") for i in range(1, 8)], control_mode="position",
     )
     initial = [0, 0, 0, -np.pi / 2, 0, np.pi / 2, -np.pi / 4]
     robot.initialize(
@@ -244,13 +245,13 @@ def test_panda_arm_mapping_leaves_gripper_command_untouched():
     model = mujoco.MjModel.from_xml_path(str(scene))
     data = mujoco.MjData(model)
     data.ctrl[model.actuator("actuator8").id] = 255
-    robot = MujocoRobotModel(model, data, [(f"joint{i}", f"actuator{i}") for i in range(7, 0, -1)])
+    robot = MujocoRobotModel(model, data, [(f"joint{i}", f"actuator{i}") for i in range(7, 0, -1)], control_mode="position")
     values = np.array([-0.7, 1.5, 0, -1.3, 0.1, 0.2, 0.3])
     robot.apply_command(JointPositionCommand(robot.joint_names, values))
     np.testing.assert_array_equal(data.ctrl[:7], values[::-1])
     assert data.ctrl[7] == 255
     with pytest.raises(ValueError, match="directly drive"):
-        MujocoRobotModel(model, data, [("finger_joint1", "actuator8")])
+        MujocoRobotModel(model, data, [("finger_joint1", "actuator8")], control_mode="position")
 
 
 @pytest.mark.parametrize("pairs, message", [
@@ -266,7 +267,7 @@ def test_panda_arm_mapping_leaves_gripper_command_untouched():
 ])
 def test_rejects_invalid_joint_actuator_mappings(robot, pairs, message):
     with pytest.raises(ValueError, match=message):
-        MujocoRobotModel(robot.model, robot.data, pairs)
+        MujocoRobotModel(robot.model, robot.data, pairs, control_mode="position")
 
 
 @pytest.mark.parametrize("actuator", [
@@ -279,7 +280,7 @@ def test_rejects_nonposition_or_nonunit_actuators(actuator):
     xml = MODEL_XML.replace('<position name="hinge_servo" joint="hinge" kp="100"/>', actuator)
     model = mujoco.MjModel.from_xml_string(xml)
     with pytest.raises(ValueError, match="position servo|unit gear"):
-        MujocoRobotModel(model, mujoco.MjData(model), PAIRS)
+        MujocoRobotModel(model, mujoco.MjData(model), PAIRS, control_mode="position")
 
 
 def test_unknown_frames_and_command_order_fail_clearly(robot):
@@ -316,7 +317,7 @@ def test_shared_types_copy_inputs_and_normalize_quaternions():
     np.testing.assert_array_equal(pose.quaternion, [0, 0, 0, 1])
 
 
-def make_controller(robot: RobotModel) -> Controller[PoseTarget, JointPositionCommand]:
+def make_controller(robot: RobotModel) -> Controller[TaskSpaceTarget, JointPositionCommand]:
     return InverseKinematicsController(robot, IKQPConfig(
         velocity_lower=np.full(len(robot.joint_names), -0.5),
         velocity_upper=np.full(len(robot.joint_names), 0.5),
@@ -327,7 +328,7 @@ def make_controller(robot: RobotModel) -> Controller[PoseTarget, JointPositionCo
 def test_compute_and_reset_do_not_mutate_the_simulation(robot):
     controller = make_controller(robot)
     pose = robot.get_pose("tool")
-    target = PoseTarget("tool", Pose(pose.position + [0.01, -0.02, 0.01], pose.quaternion))
+    target = TaskSpaceTarget("tool", Pose(pose.position + [0.01, -0.02, 0.01], pose.quaternion))
     snapshot = {name: getattr(robot.data, name).copy() for name in (
         "qpos", "qvel", "qacc", "ctrl", "qfrc_applied", "xpos", "xquat",
     )}
@@ -347,7 +348,7 @@ def test_equivalent_quaternion_signs_give_identical_commands(robot):
     pose = robot.get_pose("tool")
     quaternion = (Rotation.from_euler("z", 0.1) * Rotation.from_quat(pose.quaternion)).as_quat()
     commands = [
-        controller.compute(PoseTarget("tool", Pose(pose.position, sign * quaternion)), 0.02)
+        controller.compute(TaskSpaceTarget("tool", Pose(pose.position, sign * quaternion)), 0.02)
         for sign in (-1, 1)
     ]
     np.testing.assert_allclose(commands[0].positions, commands[1].positions, atol=1e-12)
@@ -356,7 +357,7 @@ def test_equivalent_quaternion_signs_give_identical_commands(robot):
 @pytest.mark.parametrize("dt", [0, -0.01, np.nan, np.inf])
 def test_compute_rejects_invalid_timestep(robot, dt):
     with pytest.raises(ValueError, match="dt"):
-        make_controller(robot).compute(PoseTarget("tool", robot.get_pose("tool")), dt)
+        make_controller(robot).compute(TaskSpaceTarget("tool", robot.get_pose("tool")), dt)
 
 
 @pytest.mark.parametrize("lower, upper", [
@@ -384,6 +385,10 @@ def test_controller_rejects_wrong_joint_count(robot):
 class SliderModel(RobotModel):
     """A one-axis kinematic model; exercises IK without simulator-specific access."""
 
+    @property
+    def control_mode(self):
+        return "position"
+
     joint_names = ("slider",)
 
     @property
@@ -410,7 +415,7 @@ def test_controller_obeys_velocity_and_position_limits_with_a_generic_model():
     robot = SliderModel()
     controller = make_controller(robot)
     for reference, expected in (([2.0, 0, 0], 1.0), ([0.0, 0, 0], 0.94)):
-        command = controller.compute(PoseTarget("tool", Pose(reference, [0, 0, 0, 1])), 0.1)
+        command = controller.compute(TaskSpaceTarget("tool", Pose(reference, [0, 0, 0, 1])), 0.1)
         np.testing.assert_allclose(command.positions, [expected], atol=1e-6)
 
 
@@ -437,12 +442,12 @@ def test_viewer_com_marker_tracks_robot_without_changing_physics():
             )
 
     scene = files("hybrid_control.sim_interfaces.mujoco.models.panda") / "scene.xml"
-    robot = MujocoRobotModel.from_xml_path(str(scene), JOINT_ACTUATOR_PAIRS)
+    robot = MujocoRobotModel.from_xml_path(str(scene), JOINT_ACTUATOR_PAIRS, control_mode="position")
     robot.initialize(Q_INIT)
     handle = SimpleNamespace(
         user_scn=mujoco.MjvScene(robot.model, maxgeom=2), lock=nullcontext,
     )
-    target = PoseTarget(FRAME_CONTROL, robot.get_pose(FRAME_CONTROL))
+    target = TaskSpaceTarget(FRAME_CONTROL, robot.get_pose(FRAME_CONTROL))
     for joint1 in (0.0, 0.4):
         positions = Q_INIT.copy()
         positions[0] = joint1

@@ -12,7 +12,7 @@ from collections.abc import Mapping, Sequence
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from hybrid_control.robots.model import RobotModel, TorqueRobotModel
+from hybrid_control.robots.model import ControlMode, RobotModel
 from hybrid_control.robots.state import CenterOfMassState, JointPositionCommand, JointState, JointTorqueCommand, Pose
 
 
@@ -88,8 +88,14 @@ class IsaacRobotModel(RobotModel):
     predicted after the commanded base action, which the IK/QP should react to.
     """
 
+    @property
+    def control_mode(self) -> ControlMode:
+        return "position"
+
     def __init__(self, buffer: IsaacArticulationBuffer, env: int,
-                 extra_frames: Mapping[str, tuple[str, Pose]] | None = None):
+                 extra_frames: Mapping[str, tuple[str, Pose]] | None = None, *,
+                 expected_control_mode: ControlMode | None = None):
+        super().__init__(expected_control_mode=expected_control_mode)
         self.buffer = buffer
         self.env = env
         self.extra_frames = dict(extra_frames or {})
@@ -186,17 +192,22 @@ class IsaacDynamicsBuffer(IsaacArticulationBuffer):
             joint_ids=self.joint_ids)
 
 
-class IsaacTorqueRobotModel(IsaacRobotModel, TorqueRobotModel):
-    """``TorqueRobotModel`` view of environment ``env`` in an ``IsaacDynamicsBuffer``.
+class IsaacTorqueRobotModel(IsaacRobotModel):
+    """Torque-controlled ``RobotModel`` view of environment ``env`` in an ``IsaacDynamicsBuffer``.
 
     Jacobians of ``extra_frames`` are their parent body's Jacobian shifted to the frame origin.
     ``get_jacobian_derivative`` is a backward difference over the last two ``buffer.read`` times
     (zero on the first step); PhysX has no dJ/dt.
     """
 
+    @property
+    def control_mode(self) -> ControlMode:
+        return "torque"
+
     def __init__(self, buffer: IsaacDynamicsBuffer, env: int,
-                 extra_frames: Mapping[str, tuple[str, Pose]] | None = None):
-        super().__init__(buffer, env, extra_frames)
+                 extra_frames: Mapping[str, tuple[str, Pose]] | None = None, *,
+                 expected_control_mode: ControlMode | None = None):
+        super().__init__(buffer, env, extra_frames, expected_control_mode=expected_control_mode)
         self._jacobian_history: dict[str, tuple[float, np.ndarray, np.ndarray]] = {}
         self._jacobian_cache: dict[str, tuple[float, np.ndarray]] = {}  # the controller asks several times per step
 

@@ -22,11 +22,8 @@ import numpy as np
 
 from hybrid_control.sim_interfaces.mujoco.adapter import MujocoRobotModel
 from hybrid_control.sim_interfaces.mujoco.modifier import MujocoModifier
-from hybrid_control.controllers.ik_qp.ik_qp_mujoco import (
-    IKQPConfig,
-    InverseKinematicsController,
-    PoseTarget,
-)
+from hybrid_control.controllers.ik_qp.ik_qp_mujoco import InverseKinematicsController
+from hybrid_control.utils.control_utils import IKQPConfig, TaskSpaceTarget
 from hybrid_control.utils.logger import logger
 
 
@@ -82,7 +79,7 @@ def _create_simulation() -> MujocoRobotModel:
     data = mujoco.MjData(model)
     mujoco.mj_forward(model, data)
     robot = MujocoRobotModel(
-        model, data, JOINT_ACTUATOR_PAIRS,
+        model, data, JOINT_ACTUATOR_PAIRS, control_mode="position",
         base_actuator_names=("base_x_servo", "base_y_servo", "base_yaw_servo"),
     )
     robot.initialize(
@@ -121,7 +118,7 @@ def run():
     controller.reset()
 
     # Record fixed world-frame EE target at the initial arm pose.
-    target = PoseTarget(FRAME_CONTROL, robot.get_pose(FRAME_CONTROL))
+    target = TaskSpaceTarget(FRAME_CONTROL, robot.get_pose(FRAME_CONTROL))
     modifier = MujocoModifier(COM_MARKER_DIAMETER)
 
     model, data = robot.model, robot.data

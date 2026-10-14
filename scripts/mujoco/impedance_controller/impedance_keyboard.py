@@ -20,12 +20,9 @@ import mujoco
 import mujoco.viewer as mujoco_viewer
 import numpy as np
 
-from hybrid_control.controllers.impedance.impedance_control import (
-    ImpedanceController,
-    ImpedanceQPConfig,
-    TaskSpaceTarget,
-)
-from hybrid_control.sim_interfaces.mujoco.adapter import MujocoTorqueRobotModel
+from hybrid_control.controllers.impedance.impedance_control import ImpedanceController
+from hybrid_control.utils.control_utils import ImpedanceQPConfig, TaskSpaceTarget
+from hybrid_control.sim_interfaces.mujoco.adapter import MujocoRobotModel
 from hybrid_control.sim_interfaces.mujoco.modifier import MujocoModifier
 from hybrid_control.utils.logger import logger
 
@@ -83,7 +80,7 @@ _modifier = MujocoModifier(COM_MARKER_DIAMETER)
 # ==================================================================================================
 # SETUP
 # ==================================================================================================
-def _create_simulation() -> MujocoTorqueRobotModel:
+def _create_simulation() -> MujocoRobotModel:
     spec = MujocoModifier.build_mobile_base_spec(
         XML_FILE, base_range=BASE_RANGE, servo_kp=BASE_SERVO_KP,
         yaw_range=BASE_YAW_RANGE, yaw_servo_kp=BASE_YAW_SERVO_KP,
@@ -92,8 +89,8 @@ def _create_simulation() -> MujocoTorqueRobotModel:
     model = spec.compile()
     data = mujoco.MjData(model)
     mujoco.mj_forward(model, data)
-    robot = MujocoTorqueRobotModel(
-        model, data, JOINT_ACTUATOR_PAIRS,
+    robot = MujocoRobotModel(
+        model, data, JOINT_ACTUATOR_PAIRS, control_mode="torque",
         base_actuator_names=("base_x_servo", "base_y_servo", "base_yaw_servo"),
     )
     robot.initialize(
@@ -113,7 +110,7 @@ def _create_simulation() -> MujocoTorqueRobotModel:
     return robot
 
 
-def _create_controller(robot: MujocoTorqueRobotModel) -> ImpedanceController:
+def _create_controller(robot: MujocoRobotModel) -> ImpedanceController:
     config = ImpedanceQPConfig(
         acceleration_lower=-DDQ_MAX, acceleration_upper=DDQ_MAX,
         torque_lower=-TAU_MAX, torque_upper=TAU_MAX,

@@ -5,8 +5,8 @@
 | Item | Change |
 |---|---|
 | `controllers/ik_qp/controller.py` | Renamed to `ik_qp_mujoco.py`; imports in scripts, tests and docs updated. Behaviour unchanged. |
-| `controllers/ik_qp/config.py` | New. `PoseTarget` and `IKQPConfig` moved here and shared by both controllers. They are still importable from `ik_qp_mujoco`. |
-| `controllers/ik_qp/ik_qp.py` | New. `PinkInverseKinematicsController(robot, IKQPConfig, solver="osqp" \| "daqp")`, with the same `compute(PoseTarget, dt) -> JointPositionCommand` interface. |
+| `utils/control_utils.py` | New. `TaskSpaceTarget` and `IKQPConfig` moved here and shared by both controllers. All callers import the shared data classes from `utils.control_utils`. |
+| `controllers/ik_qp/ik_qp.py` | New. `PinkInverseKinematicsController(robot, IKQPConfig, solver="osqp" \| "daqp")`, with the same `compute(TaskSpaceTarget, dt) -> JointPositionCommand` interface. |
 | `sim_interfaces/isaac/assets/franka/lula_franka_gen.urdf` | Unmodified copy of Isaac Lab's Franka URDF (IsaacLab @ `6ec3e9b`). License: `docs/licenses/IsaacLab-LICENSE`. |
 | `pyproject.toml` | `isaac` extra: `pin-pink`, `qpsolvers<4.9` (4.9+ needs osqp ≥ 1.0, which `ik_qp_mujoco` does not support), `daqp==0.8.5` (same pin as Isaac Lab). |
 | `ik_qp.build_model` / `extra_frames` | Adds fixed frames that aren't in the URDF (e.g. the TCP) without editing the vendored file. |

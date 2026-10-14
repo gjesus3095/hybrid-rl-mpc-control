@@ -24,11 +24,8 @@ from scipy.spatial.transform import Rotation
 from hybrid_control.sim_interfaces.mujoco.adapter import MujocoRobotModel
 from hybrid_control.sim_interfaces.mujoco.modifier import MujocoModifier
 from hybrid_control.controllers.base import Controller
-from hybrid_control.controllers.ik_qp.ik_qp_mujoco import (
-    IKQPConfig,
-    InverseKinematicsController,
-    PoseTarget,
-)
+from hybrid_control.controllers.ik_qp.ik_qp_mujoco import InverseKinematicsController
+from hybrid_control.utils.control_utils import IKQPConfig, TaskSpaceTarget
 from hybrid_control.robots.model import RobotModel
 from hybrid_control.robots.state import JointPositionCommand, Pose
 from hybrid_control.utils.logger import logger
@@ -103,7 +100,7 @@ def create_simulation() -> MujocoRobotModel:
     mujoco.mj_forward(model, data)
 
     robot = MujocoRobotModel(
-        model, data, JOINT_ACTUATOR_PAIRS,
+        model, data, JOINT_ACTUATOR_PAIRS, control_mode="position",
         base_actuator_names=("base_x_servo", "base_y_servo", "base_yaw_servo"),
     )
     robot.initialize(
@@ -125,7 +122,7 @@ def create_simulation() -> MujocoRobotModel:
     return robot
 
 
-def create_controller(robot: RobotModel) -> Controller[PoseTarget, JointPositionCommand]:
+def create_controller(robot: RobotModel) -> Controller[TaskSpaceTarget, JointPositionCommand]:
     config = IKQPConfig(
         velocity_lower=DQ_MIN, velocity_upper=DQ_MAX,
         kp_pos=KP_POS, kp_ori=KP_ORI, damping=JOINT_VEL_WEIGHT,
@@ -277,7 +274,7 @@ def run_base_disturbance(*, viewer=False):
         for idx, ((wx, wy, wyaw), pos, quat) in enumerate(
             zip(base_waypoints, arm_positions, arm_quaternions), start=1
         ):
-            target = PoseTarget(FRAME_CONTROL, Pose(pos, quat))
+            target = TaskSpaceTarget(FRAME_CONTROL, Pose(pos, quat))
             context = f"Waypoint {idx}/{N_BASE_POSITIONS} (seed={RANDOM_SEED})"
             logger.info(
                 "%s: base=[%.3f, %.3f] m, yaw=%.1f deg, hand=%s m (world frame)",
