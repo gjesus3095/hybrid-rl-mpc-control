@@ -2,7 +2,7 @@
 
 Top view (x-y) and side view (x-z): shoulder, reach sphere/min radius, minimum height, the base footprint at spawn,
 every trajectory (fixed points as dots, the start of each moving trajectory marked) -- all of them reachable by
-construction (see ``hybrid_control.rl.trajectories``).
+construction (see ``hybrid_control.rl.policy_with_controller.trajectories``).
 
 Usage (needs torch + matplotlib; works in the Isaac Lab environment):
 

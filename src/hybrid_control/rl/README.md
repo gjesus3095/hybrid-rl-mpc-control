@@ -12,7 +12,11 @@ PPO (RSL-RL):
 Training randomizes the platform and dynamics to learn balance as the arm moves.
 `config.py` defines the PPO runner. The commands below currently use
 `policy_with_controller/`; training, playback, and recording entry points for
-the policy without a controller still need to be wired up. `--zero_policy` and
+the policy without a controller are not implemented yet. Its `env.py` is still
+a copy of the controller-based environment, including QP logic and imports of
+missing local `qp_pool` and `trajectories` modules; its observations and rewards
+still include reference-tracking terms. It is not runnable as a controller-free
+environment. `--zero_policy` and
 `--mode none` disable the base policy while retaining the arm controller, so they
 do not run the planned policy without a controller.
 

@@ -4,10 +4,9 @@ reference trajectory), in one scene: the left half of the row runs the trained p
 "Untrained" is a checkpoint saved after the first PPO update (``model_0.pt``), i.e. practically the initial network.
 The scenarios are picked from a pool of randomized platforms to include small/light ones (see ``--hard_ranks``).
 
-Usage (from the Isaac Lab folder):
+Usage (from the repo root, after the Isaac Lab setup in the root README):
 
-    PYTHONPATH=~/hybrid-rl-mpc-control/src .venv/bin/python \
-        ~/hybrid-rl-mpc-control/scripts/isaac/compare_policies_video.py \
+    $ISAACLAB_PYTHON scripts/isaac/compare_policies_video.py \
         --trained <run>/model_149.pt --untrained <run>/model_0.pt
 """
 

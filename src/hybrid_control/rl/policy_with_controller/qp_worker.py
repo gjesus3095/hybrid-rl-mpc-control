@@ -14,8 +14,8 @@ from multiprocessing import resource_tracker, shared_memory
 
 import numpy as np
 
-from hybrid_control.controllers.ik_qp.config import IKQPConfig, PoseTarget
-from hybrid_control.robots.model import TorqueRobotModel
+from hybrid_control.utils.control_utils import IKQPConfig, TaskSpaceTarget
+from hybrid_control.robots.model import ControlMode, RobotModel
 from hybrid_control.robots.state import CenterOfMassState, JointState, Pose
 from hybrid_control.rl.policy_with_controller.qp_pool import views
 
@@ -51,15 +51,20 @@ class _PinkSlice:
                 continue
             robot.env = i
             try:
-                v["command"][i] = self.controller.compute(PoseTarget(self.frame, _pose(v["target"][i])), self.dt).positions
+                v["command"][i] = self.controller.compute(TaskSpaceTarget(self.frame, _pose(v["target"][i])), self.dt).positions
             except NoSolutionFound:  # hold position
                 v["failed"][i] = 1.0
 
 
-class _ArrayTorqueModel(TorqueRobotModel):
-    """``TorqueRobotModel`` view of env ``self.i`` in the pool arrays (only what the impedance QP reads)."""
+class _ArrayTorqueModel(RobotModel):
+    """Torque-mode ``RobotModel`` view of env ``self.i`` in the pool arrays."""
+
+    @property
+    def control_mode(self) -> ControlMode:
+        return "torque"
 
     def __init__(self, v, joint_names, frame, torque_limit):
+        super().__init__()
         self.v, self.i, self._names, self.frame = v, 0, tuple(joint_names), frame
         self._torque_limits = (-np.array(torque_limit), np.array(torque_limit))
 
