@@ -177,37 +177,41 @@ def main():
         outcomes, episode, hold, finished, t_tip = [], 1, 0, False, None
         obs = new_episode(episode)
         gen = torch.Generator(device=dev).manual_seed(args_cli.seed)
-        with torch.inference_mode():
-            while episode <= k:
-                a = torch.zeros(n, 3, device=dev)
-                if args_cli.mode != "none":
-                    a[episode] = policy(obs[episode : episode + 1])[0]
-                if args_cli.mode == "sampled":
-                    a[episode] += args_cli.noise_std * torch.randn(3, device=dev, generator=gen)
-                obs, _, dones, extras = env.step(a)
-                t_ep = float(env.episode_length_buf[episode]) * env.dt
-                if not finished and bool(dones[episode]):
-                    failed = bool(extras["failed"][episode])
-                    outcomes.append(not failed)
-                    finished, t_tip = True, t_ep
-                    hold = int((args_cli.hold_tipped if failed else args_cli.hold_end) / env.dt)
-                status = f"TIPPED at {t_tip:.1f} s" if finished and not outcomes[-1] else ("completed" if finished else "upright")
-                markers.update(base_env)
-                ref_markers.update(env)
-                for cam in cameras:
-                    cam.update(env.dt)
-                tiles = [cam.data.output["rgb"].torch[0, ..., :3].cpu().numpy() for cam in cameras]
-                rho = float(base_env.com_offset[episode] / base_env.half_length[episode])
-                kind, phase = env.traj.kind_name(episode), env.traj.phase_name(episode, t_ep)
-                writer.append_data(compose(tiles, base_env, episode, status, t_ep, episode, k, outcomes, args_cli.title,
-                                           rho, qp_lines, kind, phase))
-                if finished:
-                    hold -= 1
-                    if hold <= 0:
-                        episode, finished = episode + 1, False
-                        if episode <= k:
-                            obs = new_episode(episode)
-        writer.close()
+        # close the writer even on a crash or Ctrl-C: an unclosed MP4 has no index (moov atom) and does not play
+        # (imageio's own ``with writer`` skips the close when an exception is raised)
+        try:
+            with torch.inference_mode():
+                while episode <= k:
+                    a = torch.zeros(n, 3, device=dev)
+                    if args_cli.mode != "none":
+                        a[episode] = policy(obs[episode : episode + 1])[0]
+                    if args_cli.mode == "sampled":
+                        a[episode] += args_cli.noise_std * torch.randn(3, device=dev, generator=gen)
+                    obs, _, dones, extras = env.step(a)
+                    t_ep = float(env.episode_length_buf[episode]) * env.dt
+                    if not finished and bool(dones[episode]):
+                        failed = bool(extras["failed"][episode])
+                        outcomes.append(not failed)
+                        finished, t_tip = True, t_ep
+                        hold = int((args_cli.hold_tipped if failed else args_cli.hold_end) / env.dt)
+                    status = f"TIPPED at {t_tip:.1f} s" if finished and not outcomes[-1] else ("completed" if finished else "upright")
+                    markers.update(base_env)
+                    ref_markers.update(env)
+                    for cam in cameras:
+                        cam.update(env.dt)
+                    tiles = [cam.data.output["rgb"].torch[0, ..., :3].cpu().numpy() for cam in cameras]
+                    rho = float(base_env.com_offset[episode] / base_env.half_length[episode])
+                    kind, phase = env.traj.kind_name(episode), env.traj.phase_name(episode, t_ep)
+                    writer.append_data(compose(tiles, base_env, episode, status, t_ep, episode, k, outcomes, args_cli.title,
+                                               rho, qp_lines, kind, phase))
+                    if finished:
+                        hold -= 1
+                        if hold <= 0:
+                            episode, finished = episode + 1, False
+                            if episode <= k:
+                                obs = new_episode(episode)
+        finally:
+            writer.close()
         print(f"[RESULT] {sum(outcomes)} / {len(outcomes)} episodes completed without tipping: {['OK' if o else 'X' for o in outcomes]}")
         print(f"[INFO] Saved video to {args_cli.video_path}")
         env.close()
