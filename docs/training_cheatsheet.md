@@ -85,7 +85,7 @@ cd $R && env -u PYTHONPATH uv run pytest -q
 |---|---|
 | Reward terms and weights | `RewardCfg` in `src/hybrid_control/rl/rewards.py` |
 | Platform randomization (size, mass, payload, hardness bias) | `DomainRandomization` in `src/hybrid_control/sim_interfaces/isaac/ridgeback/params.py` |
-| Reference trajectories (reach, directions, amplitude, speed) | `TrajectoryCfg` in `src/hybrid_control/rl/trajectories.py` |
+| Reference trajectories (reach, directions, amplitude, speed) | `TrajectoryCfg` in `src/hybrid_control/rl/policy_with_controller/trajectories.py` |
 | Control rate, episode length, base speed limits, QP gains | `StabilizationEnvCfg` / `IKCfg` in `src/hybrid_control/rl/env.py` |
 | Observations | `observe()` in `src/hybrid_control/rl/observations.py` |
 | PPO hyperparameters, network size | `make_runner_cfg()` in `src/hybrid_control/rl/config.py` |

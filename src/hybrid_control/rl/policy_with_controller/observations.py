@@ -9,12 +9,15 @@ from dataclasses import dataclass
 
 import torch
 
+from hybrid_control.utils.torch_rotations import quat_to_matrix
+
 
 @dataclass(frozen=True)
 class ObservationCfg:
     lookahead: tuple[float, ...] = (0.0, 0.25, 0.5, 1.0, 1.5)  # reference lookahead times [s]
     physical_params_in_actor: bool = True  # footprint, masses, payload, COM height; the critic always sees them
     com_offset_in_actor: bool = True  # com_offset_norm (rho); the critic always sees it. False in runs from before it
+    ref_orientation_in_actor: bool = True  # reference orientation per lookahead (actor and critic). False in older runs
 
 
 @dataclass
@@ -33,6 +36,7 @@ class Snapshot:
     # arm_q: torch.Tensor  # (N, 7)
     # arm_qd: torch.Tensor  # (N, 7)
     ref: torch.Tensor  # (N, K, 3) reference lookahead
+    ref_quat: torch.Tensor  # (N, K, 4) reference lookahead orientation (xyzw)
     # traj_centre: torch.Tensor  # (N, 3) centre of the reference trajectory
     half_size: torch.Tensor  # (N, 2) half footprint length, width
     params: torch.Tensor  # (N, P) [length, width, base_mass, base_com_z, payload, total_mass]
@@ -49,6 +53,13 @@ def to_base_frame(yaw: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
     if v.shape[-1] == 3:
         out.append(v[..., 2])
     return torch.stack(out, dim=-1)
+
+
+def rotation_6d_base_frame(yaw: torch.Tensor, quat: torch.Tensor) -> torch.Tensor:
+    """First two columns (..., 6) of the rotation matrices of world-frame quaternions ``quat`` (N, ..., 4), expressed
+    in the yaw frame: a continuous orientation representation."""
+    columns = quat_to_matrix(quat)[..., :2].transpose(-1, -2)  # (N, ..., 2, 3): the x and y axes as rows
+    return to_base_frame(yaw, columns.reshape(columns.shape[0], -1, 3)).reshape(*quat.shape[:-1], 6)
 
 
 def com_offset_norm(snap: Snapshot) -> torch.Tensor:
@@ -80,6 +91,8 @@ def observation_terms(snap: Snapshot, cfg: ObservationCfg) -> tuple[dict[str, to
         # "arm_q": snap.arm_q, "arm_qd": snap.arm_qd,
         "last_action": snap.last_action,
     }
+    if cfg.ref_orientation_in_actor:
+        actor["ref_orientation"] = rotation_6d_base_frame(snap.yaw, snap.ref_quat).flatten(1)  # 6D per lookahead
     if cfg.physical_params_in_actor:
         actor["physical_params"] = snap.params
     if cfg.com_offset_in_actor:

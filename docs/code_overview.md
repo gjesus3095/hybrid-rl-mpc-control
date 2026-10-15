@@ -159,7 +159,7 @@ RidgebackDREnv (batched, DR)  <--  BaseStabilizationEnv (rl/env.py, RSL-RL VecEn
 | `rl/qp_pool.py`, `rl/qp_worker.py` | Worker-process pool for the per-env QPs (shared memory; same controller, same results) |
 | `rl/observations.py` | `observe(Snapshot)` -> actor/critic obs (base frame, reference lookahead, total COM, params) |
 | `rl/rewards.py` | `RewardCfg`, `compute_rewards`: COM centred, near/toward the trajectory, motion penalties, termination |
-| `rl/trajectories.py` | World-frame random reference trajectories (fixed points + Lissajous), reachable from the spawn pose |
+| `rl/policy_with_controller/trajectories.py` | World-frame random reference pose trajectories: fixed points + Lissajous (reachable from the spawn pose) and quintic spawn → A → B pose paths (exact shell/height checks) |
 | `rl/config.py` | RSL-RL PPO runner config (dict) |
 | `isaac/ridgeback/arm_model.py` | `ArmBatch` (one GPU->CPU snapshot per QP tick) and `IsaacArmModel(RobotModel)` per env |
 | `isaac/ridgeback/viz.py` | COM markers (arm, total + plate projection), reference lookahead markers (policy lookahead times, yellow now -> green ahead), overlays |

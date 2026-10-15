@@ -39,7 +39,7 @@ Hybrid controller for a 3-DoF planar mobile base (RL) + 7-DoF Franka Panda arm (
 - `src/hybrid_control/sim_interfaces/isaac/assets/franka/lula_franka_gen.urdf` — temporary copy of Isaac Lab's Franka URDF (see `ik_qp.py` docstring)
 - `src/hybrid_control/utils/math_helpers.py` — math utilities for kinematics
 - `src/hybrid_control/sim_interfaces/mujoco/models/panda/` — Panda XML model + meshes
-- `src/hybrid_control/rl/` — RSL-RL training env (`BaseStabilizationEnv`), observations, rewards, trajectories (reachable from the spawn pose), QP worker pool, PPO config; Isaac `RobotModel` adapter in `sim_interfaces/isaac/ridgeback/arm_model.py`; entry points `scripts/isaac/train_base_policy.py`, `play_base_policy.py` (see `docs/code_overview.md` section 4)
+- `src/hybrid_control/rl/` — RSL-RL training env (`BaseStabilizationEnv`), observations, rewards, trajectories (fixed / Lissajous / quintic spawn → A → B pose paths; `utils/torch_rotations.py` for batched quaternions), QP worker pool, PPO config; Isaac `RobotModel` adapter in `sim_interfaces/isaac/ridgeback/arm_model.py`; entry points `scripts/isaac/train_base_policy.py`, `play_base_policy.py` (see `docs/code_overview.md` section 4)
 
 **Planned (not yet implemented):** RL policy/observations, Isaac Lab env configs, trajectory utilities. `integration/hybrid_controller.py` (trained policy + QP outside the training wrapper), automatic curriculum, observation noise.
 

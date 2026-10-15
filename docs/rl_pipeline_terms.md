@@ -1,6 +1,6 @@
 # RL base policy: observations, actions, rewards, terminations
 
-Source: `src/hybrid_control/rl/` (`observations.py`, `rewards.py`, `env.py`). "Base frame" = yaw-aligned frame at the platform footprint centre. Policy 30 Hz, arm QP 60 Hz, physics 120 Hz, episodes 15 s.
+Source: `src/hybrid_control/rl/` (`observations.py`, `rewards.py`, `env.py`). "Base frame" = yaw-aligned frame at the platform footprint centre. Policy 30 Hz, arm QP 60 Hz, physics 120 Hz, episodes 5 s.
 
 ## Actions (3)
 
@@ -15,6 +15,7 @@ Actor (39):
 | Term | Dim | Purpose |
 |---|---|---|
 | `ref_lookahead` | 15 | Arm reference at t + (0, 0.25, 0.5, 1, 1.5) s: lets the policy anticipate where the arm (and its mass) will go. |
+| `ref_orientation` | 30 | Reference TCP orientation at the same times (first two rotation-matrix columns, base frame). |
 | `com_total` | 3 | Whole-robot COM (x, y, height): the quantity to keep over the footprint. |
 | `com_norm` | 2 | COM x, y as a fraction of the half footprint: same, normalized across platform sizes (±1 = edge). |
 | `base_lin_vel` | 2 | Base planar velocity: needed for smooth, damped corrections. |
@@ -53,6 +54,6 @@ Critic (43) = actor + privileged:
 |---|---|---|
 | `tipped` | no | \|roll\| or \|pitch\| > 0.5 rad: the robot has fallen. |
 | `left_footprint` | no | Total COM outside the footprint: statically unstable, counted as failure. |
-| `time_out` | yes | 15 s episode limit; bootstrapped, not penalized. |
+| `time_out` | yes | 5 s episode limit (= the trajectory duration); bootstrapped, not penalized. |
 
-At reset: new base mass (5.5–38 kg), payload (0.8–3 kg) and reference trajectory; footprint (0.19–0.52 m per side) is fixed per env at spawn.
+At reset: new base mass (5.5–38 kg), payload (0.8–3 kg) and reference trajectory (fixed point 20 %, Lissajous with an oscillating down-pointing orientation 40 %, quintic spawn → A (2.5 s) → B (2.5 s) pose path 40 %); footprint (0.19–0.52 m per side) is fixed per env at spawn.

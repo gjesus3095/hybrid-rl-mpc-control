@@ -16,29 +16,11 @@ import numpy as np
 import torch
 
 from hybrid_control.robots.state import Pose
+from hybrid_control.utils.torch_rotations import quat_apply, quat_mul
 
 EE_FRAME = "panda_hand"
 ROOT_FRAME = "panda_link0"
 N_BASE_DOFS = 6  # floating-base columns that precede the joint columns of the Isaac Lab Jacobian and dynamics
-
-
-def _quat_mul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-    """Batched xyzw quaternion product a * b."""
-    ax, ay, az, aw = a.unbind(-1)
-    bx, by, bz, bw = b.unbind(-1)
-    return torch.stack([
-        aw * bx + ax * bw + ay * bz - az * by,
-        aw * by - ax * bz + ay * bw + az * bx,
-        aw * bz + ax * by - ay * bx + az * bw,
-        aw * bw - ax * bx - ay * by - az * bz,
-    ], dim=-1)
-
-
-def _quat_apply(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
-    """Rotate vectors v (..., 3) by xyzw quaternions q (..., 4)."""
-    xyz, w = q[..., :3], q[..., 3:]
-    t = 2.0 * torch.cross(xyz, v, dim=-1)
-    return v + w * t + torch.cross(xyz, t, dim=-1)
 
 
 class ArmBatch:
@@ -70,7 +52,7 @@ class ArmBatch:
     def _ee_pose_t(self) -> tuple[torch.Tensor, torch.Tensor]:
         data = self.env.robot.data
         pos, quat = data.body_link_pos_w.torch[:, self.ee_id], data.body_link_quat_w.torch[:, self.ee_id]
-        return pos + _quat_apply(quat, self._off_pos.expand_as(pos)), _quat_mul(quat, self._off_quat.expand_as(quat))
+        return pos + quat_apply(quat, self._off_pos.expand_as(pos)), quat_mul(quat, self._off_quat.expand_as(quat))
 
     def refresh(self):
         """Copy the current state of all envs to the CPU. Call after every physics change and before the QP."""

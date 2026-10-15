@@ -2,7 +2,7 @@
 
 > The policy drives the Ridgeback base. A QP controller (`ik_qp` or `impedance`) drives the Franka arm along a world-fixed reference. Goal: keep the whole-robot COM over a small, randomized platform without tipping.
 
-**Rates:** policy 30 Hz · arm QP 60 Hz · physics 120 Hz · episode 15 s
+**Rates:** policy 30 Hz · arm QP 60 Hz · physics 120 Hz · episode 5 s
 
 **Base frame:** yaw-aligned frame at the platform footprint centre
 
@@ -19,6 +19,7 @@
 ### Actor (39)
 
 - **`ref_lookahead`** (15): arm reference at t + 0, 0.25, 0.5, 1, 1.5 s. Lets the policy anticipate where the arm mass will go.
+- **`ref_orientation`** (30): reference TCP orientation at the same times (first two rotation-matrix columns, base frame).
 - **`com_total`** (3): whole-robot COM (x, y, height). The quantity to keep over the footprint.
 - **`com_norm`** (2): COM x, y as a fraction of the half footprint (±1 = edge). Comparable across platform sizes.
 - **`base_lin_vel`** (2): base planar velocity. For smooth, damped corrections.
@@ -55,7 +56,7 @@
 
 - **`tipped`** (failure): abs(roll) or abs(pitch) > 0.5 rad. The robot has fallen.
 - **`left_footprint`** (failure): total COM outside the footprint. Statically unstable state.
-- **`time_out`** (not a failure): 15 s elapsed. Episode limit; bootstrapped, not penalized.
+- **`time_out`** (not a failure): 5 s elapsed (= the trajectory duration). Episode limit; bootstrapped, not penalized.
 
 ---
 
@@ -64,6 +65,6 @@
 - **Base mass:** 5.5 to 38 kg
 - **Payload at the TCP:** 0.8 to 3 kg
 - **Footprint:** 0.19 to 0.52 m per side, fixed per env at spawn
-- **Reference trajectory:** new fixed point (25%) or Lissajous path, 0.1 to 0.45 Hz
+- **Reference trajectory:** new fixed point (20%), Lissajous path at 0.1 to 0.45 Hz with an orientation oscillating up to 20° per axis about a down-pointing centre (40%), or quintic pose path spawn → A → B with the TCP pointing down (40%)
 
 Sampling is biased toward the hard end: small, light platform with a heavy payload.

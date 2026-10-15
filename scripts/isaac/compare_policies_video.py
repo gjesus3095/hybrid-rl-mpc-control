@@ -2,7 +2,9 @@
 reference trajectory), in one scene: the left half of the row runs the trained policy, the right half the untrained.
 
 "Untrained" is a checkpoint saved after the first PPO update (``model_0.pt``), i.e. practically the initial network.
-The scenarios are picked from a pool of randomized platforms to include small/light ones (see ``--hard_ranks``).
+The scenarios are picked from a pool of randomized platforms to include small/light ones (see ``--hard_ranks``); their
+trajectory kinds cycle through ``--kinds`` (by default fixed point, sinusoidal, quintic). Each env's tag shows its
+trajectory kind and current phase (spawn -> A, A -> B, ...).
 
 Usage (from the repo root, after the Isaac Lab setup in the root README):
 
@@ -17,6 +19,7 @@ from pathlib import Path
 from isaaclab.app import add_launcher_args, launch_simulation
 
 from hybrid_control.rl.config import CONTROLLERS, qp_solver_name, saved_controller, saved_observation_cfg, saved_qp_solver
+from hybrid_control.rl.policy_with_controller.trajectories import KINDS
 
 OUT_DIR = Path(__file__).resolve().parents[2] / "out"
 parser = argparse.ArgumentParser(description="Side-by-side video of a trained and an untrained base policy.")
@@ -26,6 +29,8 @@ parser.add_argument("--scenarios", type=int, default=4)
 parser.add_argument("--hard_ranks", type=int, nargs="+", default=[0, 20, 40, 60],
                     help="Pick scenarios at these ranks of a pool sorted from least to most stable platform.")
 parser.add_argument("--pool", type=int, default=80)
+parser.add_argument("--kinds", nargs="+", choices=list(KINDS), default=list(KINDS),
+                    help="Trajectory kinds, cycled over the scenarios.")
 parser.add_argument("--seed", type=int, default=3)
 parser.add_argument("--seconds", type=float, default=15.0)
 parser.add_argument("--spacing", type=float, default=2.4)
@@ -101,8 +106,9 @@ def main():
 
         # Identical scenarios in both halves: same dynamics (the footprint is already equal) and same trajectory.
         env.auto_reset = False
-        env._reset_idx(torch.arange(n, device=dev), dynamics=all_params)
-        for name in ("centre", "amplitude", "frequency", "phase", "start"):
+        kinds = [KINDS[args_cli.kinds[(i - 1) % len(args_cli.kinds)]] for i in range(n)]  # scenario s: env 1 + s
+        env._reset_idx(torch.arange(n, device=dev), dynamics=all_params, kinds=torch.tensor(kinds, device=dev))
+        for name in env.traj.STATE:
             tensor = getattr(env.traj, name)
             tensor[k + 1 :] = tensor[1 : k + 1]
         env._obs = env._compute_obs()
@@ -156,7 +162,8 @@ def main():
                     [cam.data.output["rgb"].torch[0, ..., :3].cpu().numpy() for cam in cameras], axis=1
                 ).copy()
                 rho = (base_env.com_offset / base_env.half_length).cpu().numpy()
-                frames.append(overlay_compare(frame, base_env, tag_px, t, titles, titles_px, divider_px, tip_times, rho, subtitles))
+                frames.append(overlay_compare(frame, base_env, tag_px, t, titles, titles_px, divider_px, tip_times, rho, subtitles,
+                                              traj=env.traj))
 
         for s in range(k):
             p = scenarios[s]

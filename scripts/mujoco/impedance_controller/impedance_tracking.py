@@ -21,7 +21,7 @@ from hybrid_control.robots.state import Pose
 from hybrid_control.sim_interfaces.mujoco.adapter import MujocoRobotModel
 from hybrid_control.sim_interfaces.mujoco.modifier import MujocoModifier
 from hybrid_control.utils.logger import logger
-from hybrid_control.utils.trajectories import QuinticTrajectory, SinusoidalTrajectory
+from hybrid_control.utils.trajectories import QuinticTrajectory, SinusoidalTrajectory, align_quaternion_signs
 
 
 # ==================================================================================================
@@ -137,6 +137,7 @@ def build_segments(start: Pose):
         rotation = Rotation.from_rotvec(rotvec) * start_rotation
         waypoints.append(Pose(start.position + offset, rotation.as_quat()))
     waypoints.append(start)  # Return home.
+    waypoints = align_quaternion_signs(waypoints)  # No quaternion sign jumps between segments.
     return [
         (QuinticTrajectory(a, b, SEGMENT_SECONDS), SEGMENT_SECONDS + SETTLE_SECONDS)
         for a, b in zip(waypoints[:-1], waypoints[1:])

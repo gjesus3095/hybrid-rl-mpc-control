@@ -39,8 +39,10 @@ def saved_qp_solver(checkpoint: str) -> str:
 
 def saved_observation_cfg(checkpoint: str) -> ObservationCfg:
     """Observation config a checkpoint was trained with, so its network input size matches. Options missing from an
-    older ``env.yaml`` take the value they had before they existed (``com_offset_in_actor``: False)."""
-    saved = {"com_offset_in_actor": False, **_saved_env_cfg(checkpoint).get("observation", {})}
+    older ``env.yaml`` take the value they had before they existed (``com_offset_in_actor``,
+    ``ref_orientation_in_actor``: False)."""
+    saved = {"com_offset_in_actor": False, "ref_orientation_in_actor": False,
+             **_saved_env_cfg(checkpoint).get("observation", {})}
     names = {f.name for f in dataclasses.fields(ObservationCfg)}
     return ObservationCfg(**{k: tuple(v) if isinstance(v, list) else v for k, v in saved.items() if k in names})
 

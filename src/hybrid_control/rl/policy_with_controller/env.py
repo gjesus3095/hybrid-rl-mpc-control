@@ -2,10 +2,10 @@
 
 Per policy step the wrapper holds the base velocity command for ``decimation`` physics steps. Every ``ik_every``
 physics steps each env's arm controller (``StabilizationEnvCfg.controller``, one of the ``controllers/`` folders)
-tracks the world-frame reference trajectory:
+tracks the world-frame reference pose trajectory (``trajectories.py``: fixed point, sine or quintic A -> B):
 
 - ``"ik_qp"``: the Pink differential IK/QP (``controllers/ik_qp/ik_qp.py``) computes arm joint position targets for
-  ``panda_hand`` (position and the orientation at reset). It knows nothing about the base: because the target is
+  ``panda_hand`` (position and orientation). It knows nothing about the base: because the target is
   fixed in the world frame, base motion shows up as a tracking error that the QP corrects.
 - ``"impedance"``: the torque-level impedance QP (``controllers/impedance``) computes arm joint torques for the TCP
   ``panda_fingertip_centered``, set up as in ``scripts/isaac/base_disturbance_impedance.py``: full pose, null-space
@@ -32,6 +32,7 @@ from tensordict import TensorDict
 
 from hybrid_control.sim_interfaces.isaac.ridgeback.arm_model import ArmBatch
 from hybrid_control.sim_interfaces.isaac.ridgeback.params import DomainRandomization
+from hybrid_control.utils.torch_rotations import quat_angle, quat_conj, quat_mul, quat_to_rotvec
 
 from .qp_pool import CONTROLLERS, QPPool
 from .observations import ObservationCfg, Snapshot, observation_terms, observe, to_base_frame
@@ -43,8 +44,7 @@ PANDA_VEL_LIMIT = np.array([2.175] * 4 + [2.61] * 3)  # rad/s, joints 1-7
 
 @dataclass(frozen=True)
 class IKCfg:
-    """Pink IK/QP (``controller="ik_qp"``). Pink always has an orientation task (its cost is fixed), so the hand
-    orientation is held at its value at reset; ``kp_ori`` only sets how fast drift is corrected."""
+    """Pink IK/QP (``controller="ik_qp"``): position and orientation tasks toward the reference pose."""
 
     kp_pos: float = 25.0  # the QP is P-only, so a moving reference lags by speed / kp_pos; 25 keeps that within a few cm
     kp_ori: float = 5.0
@@ -75,7 +75,7 @@ class ImpedanceCfg:
 class StabilizationEnvCfg:
     decimation: int = 4  # physics steps per policy step (120 Hz physics -> 30 Hz policy)
     ik_every: int = 2  # physics steps per QP update (-> 60 Hz); must divide ``decimation``
-    episode_length_s: float = 15.0
+    episode_length_s: float = 5.0  # = the trajectory duration (blend / spawn -> A -> B)
     max_base_speed: tuple[float, float, float] = (0.5, 0.5, 0.6)  # |vx|, |vy| [m/s], |wz| [rad/s] at action = +-1
     terminate_on_left_footprint: bool = True  # also end the episode when the COM leaves the footprint
     domain_randomization: DomainRandomization = field(default_factory=DomainRandomization)
@@ -140,7 +140,6 @@ class BaseStabilizationEnv(VecEnv):
 
         self.traj = ReferenceTrajectories(self.num_envs, self.device, cfg.trajectory)
         self.lookahead = torch.tensor(cfg.observation.lookahead, device=self.device)
-        self.ori_target = np.tile([0.0, 0.0, 0.0, 1.0], (self.num_envs, 1))
         self.last_action = torch.zeros(self.num_envs, 3, device=self.device)
         self.q_cmd = env.q_fold.clone()
         self.param_vec = torch.zeros(self.num_envs, 6, device=self.device)  # footprint, masses, payload, COM height
@@ -179,7 +178,9 @@ class BaseStabilizationEnv(VecEnv):
 
         t = self.episode_length_buf.float() * self.dt
         rho = env.com_offset / env.half_length  # COM offset as a fraction of the half footprint
-        track_err = (self.arm.ee_pos_t() - env.origins - self.traj.position(t)).norm(dim=-1)
+        ref_pos, ref_quat = self.traj.pose(t)
+        track_err = (self.arm.ee_pos_t() - env.origins - ref_pos).norm(dim=-1)
+        ori_err = quat_angle(torch.as_tensor(self.arm.ee_quat, dtype=torch.float32, device=self.device), ref_quat)
         centre_dist = self._centre_dist()
         base_vel = to_base_frame(env.yaw, env.robot.data.body_com_lin_vel_w.torch[:, env.base_id])[:, :2]
         yaw_rate = env.robot.data.body_com_ang_vel_w.torch[:, env.base_id, 2]
@@ -203,6 +204,7 @@ class BaseStabilizationEnv(VecEnv):
             self._reset_idx(reset_ids)
         log["Metrics/com_rho"] = rho.mean()
         log["Metrics/ee_track_error"] = track_err.mean()
+        log["Metrics/ee_ori_error"] = ori_err.mean()
         log["Metrics/ik_failures_total"] = float(self.ik_failures)
         log["Curriculum/difficulty"] = float(self.traj.cfg.difficulty)
 
@@ -213,8 +215,9 @@ class BaseStabilizationEnv(VecEnv):
     # ------------------------------------------------------------------------------------------
     # Reset
     # ------------------------------------------------------------------------------------------
-    def _reset_idx(self, ids: torch.Tensor, dynamics: list | None = None):
-        """Reset ``ids`` with freshly sampled dynamics, or the given ``BaseParams`` (``dynamics[k]`` for ``ids[k]``)."""
+    def _reset_idx(self, ids: torch.Tensor, dynamics: list | None = None, kinds: torch.Tensor | None = None):
+        """Reset ``ids`` with freshly sampled dynamics, or the given ``BaseParams`` (``dynamics[k]`` for ``ids[k]``).
+        ``kinds`` forces the reference trajectory kinds (see ``ReferenceTrajectories.reset``)."""
         env, dr = self.env, self.scfg.domain_randomization
         env.reset(ids, dynamics=dynamics or [dr.sample(self.rng) for _ in range(len(ids))])
         for i in ids.tolist():
@@ -223,8 +226,8 @@ class BaseStabilizationEnv(VecEnv):
         self.param_vec[ids, 5] = env.mass_total[ids]
         self.arm.refresh()
         ids_np = ids.cpu().numpy()
-        self.ori_target[ids_np] = self.arm.ee_quat[ids_np]
-        self.traj.reset(ids, self.arm.ee_pos_t()[ids] - env.origins[ids])
+        ee_quat = torch.as_tensor(self.arm.ee_quat[ids_np], dtype=torch.float32, device=self.device)
+        self.traj.reset(ids, self.arm.ee_pos_t()[ids] - env.origins[ids], ee_quat, kind=kinds)
         self.arm.reset_history(ids_np)
         self.q_cmd[ids] = env.q_fold[ids]
         self.effort[ids] = 0.0
@@ -257,10 +260,13 @@ class BaseStabilizationEnv(VecEnv):
         }
 
     def _reference_derivatives(self, t: torch.Tensor, eps: float = 1e-2) -> tuple[np.ndarray, np.ndarray]:
-        """Reference velocity and acceleration (N, 3) at ``t`` by central differences."""
-        p = self.traj.lookahead(t, torch.tensor([-eps, 0.0, eps], device=self.device))
-        vel = (p[:, 2] - p[:, 0]) / (2 * eps)
-        acc = (p[:, 2] - 2 * p[:, 1] + p[:, 0]) / eps**2
+        """Reference twist velocity and acceleration (N, 6), [linear, angular] in the world frame, at ``t`` by central
+        differences (the angular ones on the rotation vectors of q(t +- eps) q(t)^-1)."""
+        p, q = self.traj.lookahead_pose(t, torch.tensor([-eps, 0.0, eps], device=self.device))
+        r_minus = quat_to_rotvec(quat_mul(q[:, 0], quat_conj(q[:, 1])))
+        r_plus = quat_to_rotvec(quat_mul(q[:, 2], quat_conj(q[:, 1])))
+        vel = torch.cat([(p[:, 2] - p[:, 0]) / (2 * eps), (r_plus - r_minus) / (2 * eps)], dim=-1)
+        acc = torch.cat([(p[:, 2] - 2 * p[:, 1] + p[:, 0]) / eps**2, (r_plus + r_minus) / eps**2], dim=-1)
         return vel.cpu().numpy(), acc.cpu().numpy()
 
     def _base_feedforward(self) -> tuple[np.ndarray, np.ndarray]:
@@ -291,17 +297,15 @@ class BaseStabilizationEnv(VecEnv):
         env, arm, v = self.env, self.arm, self.pool.v
         arm.refresh()
         t = self.episode_length_buf.float() * self.dt + substep_time
-        v["target"][:, :3] = (self.traj.position(t) + env.origins).cpu().numpy()
-        v["target"][:, 3:] = self.ori_target
+        ref_pos, ref_quat = self.traj.pose(t)
+        v["target"][:, :3] = (ref_pos + env.origins).cpu().numpy()
+        v["target"][:, 3:] = ref_quat.cpu().numpy()
         v["active"][:] = (~env.tipped).cpu().numpy()
         v["q"][:] = arm.q
         if self.impedance:
             v["dq"][:], v["ee_pose"][:], v["jac"][:], v["djac"][:] = arm.qd, arm.ee_pose, arm.jacobian, arm.jacobian_dot
             v["mass"][:], v["h"][:] = arm.mass_matrix, arm.nonlinear_forces
-            ref_vel, ref_acc = self._reference_derivatives(t)
-            v["target_vel"][:] = 0.0
-            v["target_acc"][:] = 0.0
-            v["target_vel"][:, :3], v["target_acc"][:, :3] = ref_vel, ref_acc
+            v["target_vel"][:], v["target_acc"][:] = self._reference_derivatives(t)
             if self.scfg.impedance.base_feedforward:
                 base_vel, base_acc = self._base_feedforward()
                 v["target_vel"] -= base_vel
@@ -340,6 +344,7 @@ class BaseStabilizationEnv(VecEnv):
         centre = self._centre_xy() if centre is None else centre
         t = self.episode_length_buf.float() * self.dt
         origins = env.origins
+        ref, ref_quat = self.traj.lookahead_pose(t, self.lookahead)
         return Snapshot(
             yaw=env.yaw, roll=env.roll, pitch=env.pitch, centre_xy=centre,
             lin_vel_w=robot.data.body_com_lin_vel_w.torch[:, env.base_id],
@@ -347,7 +352,7 @@ class BaseStabilizationEnv(VecEnv):
             com_total=env.com_total - origins, com_arm=env.com_arm - origins,
             ee_pos=self.arm.ee_pos_t() - origins,
             # arm_q=robot.data.joint_pos.torch[:, env.arm_ids], arm_qd=robot.data.joint_vel.torch[:, env.arm_ids],
-            ref=self.traj.lookahead(t, self.lookahead), half_size=self._half_size(),
+            ref=ref, ref_quat=ref_quat, half_size=self._half_size(),
             # traj_centre=self.traj.centre,
             params=self.param_vec,
             last_action=self.last_action,
@@ -413,6 +418,7 @@ class BaseStabilizationEnv(VecEnv):
             msg += self._table(f"Active Observation Terms in Group: '{group}' (shape: ({dim},))",
                                ["Index", "Name", "Shape"], rows) + "\n"
         msg += (f"\tref_lookahead times [s]: {self._fmt(cfg.observation.lookahead)}\n"
+                "\tref_orientation: first two columns of the reference rotation matrix (base yaw frame) per lookahead\n"
                 "\tphysical_params: [length, width, base_mass, base_com_z, payload, total_mass]")
         out.append(msg)
 
@@ -439,9 +445,13 @@ class BaseStabilizationEnv(VecEnv):
             [1, "randomize_base_dynamics", f"base_mass {self._fmt(dr.base_mass)} kg, base_com_z {self._fmt(dr.base_com_z)} m, "
                                            f"payload {self._fmt(dr.payload)} kg, hard_bias {dr.hard_bias:g}"],
             [2, "footprint (fixed per env at spawn)", f"length {self._fmt(dr.length)} m, width {self._fmt(dr.width)} m"],
-            [3, "sample_reference_trajectory", f"difficulty {tr.difficulty:g}, amplitude {self._fmt(tr.amplitude)} m, "
-                                               f"frequency {self._fmt(tr.frequency)} Hz, p_fixed {tr.p_fixed:g}, "
-                                               f"blend {tr.blend_time:g} s"],
+            [3, "sample_reference_trajectory", f"p (fixed, sine, quintic) {self._fmt((tr.p_fixed, tr.p_sine, tr.p_quintic))}"],
+            [4, "  fixed / sine", f"difficulty {tr.difficulty:g}, amplitude {self._fmt(tr.amplitude)} m, "
+                                f"frequency {self._fmt(tr.frequency)} Hz, orientation <= {tr.ori_amplitude_deg:g} deg per axis "
+                                f"about a down centre, blend {tr.blend_time:g} s"],
+            [5, "  quintic spawn -> A -> B", f"segments {self._fmt(tr.segment_time)} s, |xy| >= {tr.inner_radius_xy:g} m, |p| <= {tr.outer_radius:g} m "
+                                            f"from {self._fmt(tr.arm_base)}, z >= {tr.quintic_min_z:g} m, "
+                                            f"tilt <= {tr.tilt_max_deg:g} deg, yaw {tr.yaw_centre_deg:g} +- {tr.yaw_range_deg:g} deg"],
         ]
         out.append(f"[INFO] Event Manager: <EventManager> contains {len(rows)} active terms.\n" + self._table(
             "Active Event Terms in Mode: 'reset'", ["Index", "Name", "Parameters"], rows, left=("Name", "Parameters")))
