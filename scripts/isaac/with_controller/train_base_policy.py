@@ -6,7 +6,7 @@ trajectory. Reward: keep the whole-robot COM centred over the platform and stay 
 
 Usage (from the repo root, with ISAACLAB_PYTHON set as in the README):
 
-    $ISAACLAB_PYTHON scripts/isaac/train_base_policy.py --controller ik_qp --num_envs 64 --max_iterations 500
+    $ISAACLAB_PYTHON scripts/isaac/with_controller/train_base_policy.py --controller ik_qp --num_envs 64 --max_iterations 500
 
 Logs and checkpoints go to <repo>/logs/base_policy/<timestamp>/ (view with ``tensorboard --logdir logs``).
 """
@@ -17,7 +17,7 @@ from pathlib import Path
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).resolve().parents[3]
 parser = argparse.ArgumentParser(description="Train the RL base policy.")
 parser.add_argument("--num_envs", type=int, default=64)
 parser.add_argument("--max_iterations", type=int, default=500)

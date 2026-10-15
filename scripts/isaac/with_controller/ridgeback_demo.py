@@ -13,8 +13,8 @@ Port of our Isaac Lab 2.3 demo (itself a fixed version of Isaac Lab's
 
 Usage (from the Isaac Lab 3.0 environment, in this project folder):
 
-    <IsaacLab>/isaaclab.sh -p scripts/isaac/ridgeback_demo.py --viz kit     # Linux, GUI
-    <IsaacLab>\\isaaclab.bat -p scripts\\isaac\\ridgeback_demo.py --viz kit  # Windows, GUI
+    <IsaacLab>/isaaclab.sh -p scripts/isaac/with_controller/ridgeback_demo.py --viz kit     # Linux, GUI
+    <IsaacLab>\\isaaclab.bat -p scripts\\isaac\\with_controller\\ridgeback_demo.py --viz kit  # Windows, GUI
     (drop ``--viz kit`` for a headless run)
 """
 

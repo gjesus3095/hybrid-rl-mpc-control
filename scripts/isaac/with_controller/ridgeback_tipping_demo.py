@@ -21,10 +21,10 @@ translucent box so the spheres are visible inside it.
 Scenario: settle (arm folded) -> arm swings to a stretched pose -> hold. Use ``--case NAME`` for a
 preset (see ``CASES``); individual flags override the preset.
 
-Usage (from the Isaac Lab folder; add ``--extra video`` and ``--video`` to record):
+Usage (from the repo root, after the Isaac Lab setup in the root README):
 
-    uv run --extra isaacsim --extra video python ~/hybrid-rl-mpc-control/scripts/isaac/ridgeback_tipping_demo.py \
-        --case small_light --video
+    PYTHONPATH=~/workspace/hybrid-rl-mpc-control/src \
+        $ISAACLAB_PYTHON scripts/isaac/with_controller/ridgeback_tipping_demo.py --case small_light --video
 """
 
 import argparse
@@ -45,7 +45,7 @@ CASES = {
     "with_payload": ((0.29, 0.29), 20.0, 3.0),  # the 3 kg payload alone makes it tip
 }
 
-OUT_DIR = Path(__file__).resolve().parents[2] / "out"  # <repo>/out, not the Isaac Lab folder
+OUT_DIR = Path(__file__).resolve().parents[3] / "out"  # <repo>/out, not the Isaac Lab folder
 parser = argparse.ArgumentParser(description="Tip-over experiment with a free Ridgeback-Franka base.")
 parser.add_argument("--case", choices=sorted(CASES), default=None, help="Preset footprint / base mass / payload.")
 parser.add_argument("--footprint", type=float, nargs=2, default=None, metavar=("L", "W"),

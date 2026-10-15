@@ -15,7 +15,7 @@ Modes for the policy (``--mode``):
 
 Usage (from the repo root, after the Isaac Lab setup in the root README):
 
-    $ISAACLAB_PYTHON scripts/isaac/record_episodes_video.py \
+    $ISAACLAB_PYTHON scripts/isaac/with_controller/record_episodes_video.py \
         --checkpoint <run>/model_999.pt --title "TRAINED POLICY" --video_path out/trained_episodes.mp4
 """
 
@@ -26,7 +26,7 @@ from isaaclab.app import add_launcher_args, launch_simulation
 
 from hybrid_control.rl.config import CONTROLLERS, saved_controller, saved_observation_cfg
 
-OUT_DIR = Path(__file__).resolve().parents[2] / "out"
+OUT_DIR = Path(__file__).resolve().parents[3] / "out"
 parser = argparse.ArgumentParser(description="Record one env over multiple episodes.")
 parser.add_argument("--checkpoint", type=str, required=True)
 parser.add_argument("--title", type=str, default="POLICY")

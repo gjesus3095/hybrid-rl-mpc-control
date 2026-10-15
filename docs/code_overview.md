@@ -107,10 +107,10 @@ Readable state after each step: `env.tipped`, `env.left_footprint`, `env.com_off
 
 | Script | What it is |
 |---|---|
-| `scripts/isaac/ridgeback_dr_demo.py` | **Main entry**: N randomized envs, settle → swing arm → hold, reports which tipped. Uses `RidgebackDREnv`. |
-| `scripts/isaac/ridgeback_tipping_demo.py` | Single-robot tipping experiment with named `CASES` (self-contained, predates the package). |
-| `scripts/isaac/ridgeback_demo.py` | Stock robot with a fixed base: drive schedule + arm/gripper motion (self-contained). |
-| `scripts/isaac/ridgeback_base_probe.py` | Probe for changing base mass / robot mass / platform size (self-contained). |
+| `scripts/isaac/with_controller/ridgeback_dr_demo.py` | **Main entry**: N randomized envs, settle → swing arm → hold, reports which tipped. Uses `RidgebackDREnv`. |
+| `scripts/isaac/with_controller/ridgeback_tipping_demo.py` | Single-robot tipping experiment with named `CASES` (self-contained, predates the package). |
+| `scripts/isaac/with_controller/ridgeback_demo.py` | Stock robot with a fixed base: drive schedule + arm/gripper motion (self-contained). |
+| `scripts/isaac/with_controller/ridgeback_base_probe.py` | Probe for changing base mass / robot mass / platform size (self-contained). |
 
 ### What you define
 
@@ -128,7 +128,7 @@ Readable state after each step: `env.tipped`, `env.left_footprint`, `env.com_off
 | Video | `--video`, `--video_path`, `--video_fps`; camera constants `CAM_EYE`, `CAM_TARGET`, `FOCAL`, `RES` in the demo |
 
 Run command (from the Isaac Lab folder), see the script docstring:
-`PYTHONPATH=~/hybrid-rl-mpc-control/src uv run --extra isaacsim --extra video python ~/hybrid-rl-mpc-control/scripts/isaac/ridgeback_dr_demo.py --num_envs 8 --seed 0 --video`
+`PYTHONPATH=~/hybrid-rl-mpc-control/src uv run --extra isaacsim --extra video python ~/hybrid-rl-mpc-control/scripts/isaac/with_controller/ridgeback_dr_demo.py --num_envs 8 --seed 0 --video`
 
 ### Gotchas
 
@@ -163,11 +163,11 @@ RidgebackDREnv (batched, DR)  <--  BaseStabilizationEnv (rl/env.py, RSL-RL VecEn
 | `rl/config.py` | RSL-RL PPO runner config (dict) |
 | `isaac/ridgeback/arm_model.py` | `ArmBatch` (one GPU->CPU snapshot per QP tick) and `IsaacArmModel(RobotModel)` per env |
 | `isaac/ridgeback/viz.py` | COM markers (arm, total + plate projection), reference lookahead markers (policy lookahead times, yellow now -> green ahead), overlays |
-| `scripts/isaac/train_base_policy.py` | Training entry point; TensorBoard logs in `<repo>/logs/base_policy/<run>/` |
-| `scripts/isaac/play_base_policy.py` | Deterministic evaluation (failures, COM offset, base-motion statistics; `--zero_policy` baseline) |
-| `scripts/isaac/compare_policies_video.py` | Side-by-side video of two checkpoints on identical scenarios, with live CoM-offset bars |
-| `scripts/isaac/record_episodes_video.py` | One video of several completely different episodes (own platform each) for one checkpoint; `--mode sampled` shows an untrained policy with exploration noise |
-| `scripts/isaac/check_stabilization_env.py` | Integration checks: Jacobian, static-base QP tracking, partial reset, throughput |
+| `scripts/isaac/with_controller/train_base_policy.py` | Training entry point; TensorBoard logs in `<repo>/logs/base_policy/<run>/` |
+| `scripts/isaac/with_controller/play_base_policy.py` | Deterministic evaluation (failures, COM offset, base-motion statistics; `--zero_policy` baseline) |
+| `scripts/isaac/with_controller/compare_policies_video.py` | Side-by-side video of two checkpoints on identical scenarios, with live CoM-offset bars |
+| `scripts/isaac/with_controller/record_episodes_video.py` | One video of several completely different episodes (own platform each) for one checkpoint; `--mode sampled` shows an untrained policy with exploration noise |
+| `scripts/isaac/with_controller/check_stabilization_env.py` | Integration checks: Jacobian, static-base QP tracking, partial reset, throughput |
 | `scripts/plot_reference_trajectories.py` | Plot of sampled reference trajectories with the arm's reach limits |
 
 Design decisions worth knowing:
@@ -182,7 +182,7 @@ Design decisions worth knowing:
 - **Rendering quirk:** in the video setups one robot's mesh (the first one in a view) is sometimes not drawn although its physics and COM markers are fine; cause not found. `compare_policies_video.py` puts an unused dummy env at index 0 and does not rely on a particular env.
 
 Run (from the Isaac Lab folder):
-`PYTHONPATH=~/hybrid-rl-mpc-control/src .venv/bin/python ~/hybrid-rl-mpc-control/scripts/isaac/train_base_policy.py --num_envs 256 --qp_workers 48 --max_iterations 300`
+`PYTHONPATH=~/hybrid-rl-mpc-control/src .venv/bin/python ~/hybrid-rl-mpc-control/scripts/isaac/with_controller/train_base_policy.py --num_envs 256 --qp_workers 48 --max_iterations 300`
 and `.venv/bin/tensorboard --logdir ~/hybrid-rl-mpc-control/logs/base_policy` for the logs.
 
 ---

@@ -48,7 +48,7 @@ uv run python scripts/mujoco/qp_controller/track_targets.py
 Isaac Lab scripts use the Isaac Lab interpreter:
 
 ```bash
-$ISAACLAB_PYTHON scripts/isaac/base_disturbance_keyboard.py
+$ISAACLAB_PYTHON scripts/isaac/with_controller/base_disturbance_keyboard.py
 ```
 
 See [scripts/README.md](scripts/README.md) for all scripts, their configuration constants, and key-binding tables.
@@ -139,8 +139,8 @@ hybrid-rl-ik-control/
 │   │       ├── impedance_keyboard.py
 │   │       └── impedance_singularity.py
 │   ├── isaac/
-│   │   ├── base_disturbance_keyboard.py
-│   │   ├── base_disturbance_impedance.py
+│   │   ├── no_controller/                moving-mass train, play, and checks
+│   │   ├── with_controller/              Panda/controller scripts and demos
 │   │   ├── setup_isaaclab_env.sh
 │   │   ├── validate_isaaclab_env.sh
 │   │   └── cleanup_isaaclab_env.sh

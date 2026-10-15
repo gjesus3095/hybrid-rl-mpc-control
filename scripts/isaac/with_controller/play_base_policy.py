@@ -2,7 +2,7 @@
 
 Usage (from the repo root, after the Isaac Lab setup in the root README):
 
-    $ISAACLAB_PYTHON scripts/isaac/play_base_policy.py --checkpoint logs/base_policy/<run>/model_499.pt
+    $ISAACLAB_PYTHON scripts/isaac/with_controller/play_base_policy.py --checkpoint logs/base_policy/<run>/model_499.pt
 """
 
 import argparse

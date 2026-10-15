@@ -18,10 +18,10 @@ R=~/hybrid-rl-mpc-control
 
 ```bash
 # Quick smoke test (about 5 min incl. start-up): checks the whole loop works
-$PY $R/scripts/isaac/train_base_policy.py --num_envs 64 --max_iterations 20 --qp_workers 16
+$PY $R/scripts/isaac/with_controller/train_base_policy.py --num_envs 64 --max_iterations 20 --qp_workers 16
 
 # Real run (about 35 min): 256 envs, 1000 iterations, about 6M samples
-$PY $R/scripts/isaac/train_base_policy.py --num_envs 256 --qp_workers 48 --max_iterations 1000 \
+$PY $R/scripts/isaac/with_controller/train_base_policy.py --num_envs 256 --qp_workers 48 --max_iterations 1000 \
     --log_dir $R/logs/base_policy/my_run
 ```
 
@@ -51,18 +51,18 @@ A healthy run: `failed_fraction` falls toward 0, `com_rho` toward about 0.1, tra
 ```bash
 CK=$R/logs/base_policy/my_run/model_999.pt
 # trained policy: failures, mean CoM offset, base speed / yaw rate / distance from spawn
-$PY $R/scripts/isaac/play_base_policy.py --checkpoint $CK --num_envs 128 --episodes 3 --qp_workers 32
+$PY $R/scripts/isaac/with_controller/play_base_policy.py --checkpoint $CK --num_envs 128 --episodes 3 --qp_workers 32
 # baseline: same envs, base commanded to stand still (expect about 59% failures on the current settings)
-$PY $R/scripts/isaac/play_base_policy.py --checkpoint $CK --num_envs 128 --episodes 3 --qp_workers 32 --zero_policy
+$PY $R/scripts/isaac/with_controller/play_base_policy.py --checkpoint $CK --num_envs 128 --episodes 3 --qp_workers 32 --zero_policy
 ```
 
 ## Videos (written to `$R/out/`, not tracked by git)
 
 ```bash
 # trained vs untrained side by side, 4 scenarios, live CoM bars
-$PY $R/scripts/isaac/compare_policies_video.py --trained $CK --untrained <run>/model_0.pt
+$PY $R/scripts/isaac/with_controller/compare_policies_video.py --trained $CK --untrained <run>/model_0.pt
 # one policy, 6 completely different episodes (add --mode sampled for exploration noise, e.g. with model_0.pt)
-$PY $R/scripts/isaac/record_episodes_video.py --checkpoint $CK --title "TRAINED POLICY" --video_path $R/out/episodes.mp4
+$PY $R/scripts/isaac/with_controller/record_episodes_video.py --checkpoint $CK --title "TRAINED POLICY" --video_path $R/out/episodes.mp4
 ```
 
 Copy to your PC: `scp z8:/home/u0181636/hybrid-rl-mpc-control/out/<file>.mp4 .`
@@ -71,7 +71,7 @@ Copy to your PC: `scp z8:/home/u0181636/hybrid-rl-mpc-control/out/<file>.mp4 .`
 
 ```bash
 # integration checks: Jacobian, static-base QP tracking, partial reset, throughput
-$PY $R/scripts/isaac/check_stabilization_env.py --num_envs 128 --qp_workers 32
+$PY $R/scripts/isaac/with_controller/check_stabilization_env.py --num_envs 128 --qp_workers 32
 # plot the reference trajectories with the reach limits -> out/reference_trajectories.png
 $PY $R/scripts/plot_reference_trajectories.py
 # unit tests: the repo suite runs without torch, so tests/test_rl_components.py (needs torch) is skipped there;

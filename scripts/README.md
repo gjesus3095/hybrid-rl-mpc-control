@@ -9,8 +9,13 @@ uv run python scripts/mujoco/<script>.py
 Isaac Lab scripts require the Isaac Lab interpreter. Set `ISAACLAB_PYTHON` once per shell session (see [Isaac Lab setup](../README.md#isaac-lab-30--isaac-sim-61-python-312)):
 
 ```bash
-$ISAACLAB_PYTHON scripts/isaac/<script>.py
+$ISAACLAB_PYTHON scripts/isaac/<no_controller|with_controller>/<script>.py
 ```
+
+Controller-free moving-mass commands: `isaac/no_controller/train_moving_mass_policy.py`,
+`isaac/no_controller/play_moving_mass_policy.py`, and `isaac/no_controller/check_moving_mass_env.py`.
+See the [moving-mass workflow](../src/hybrid_control/rl/README.md#controller-free-moving-mass-policy)
+for training, seeded baseline comparisons, and configuration.
 
 ---
 
@@ -143,6 +148,10 @@ uv run python scripts/mujoco/impedance_controller/impedance_singularity.py
 
 ## Isaac Lab scripts (`scripts/isaac/`)
 
+Python entry points are grouped into `no_controller/` (moving-mass policy) and
+`with_controller/` (Panda/controller experiments). Setup, validation, and cleanup
+shell scripts remain directly under `scripts/isaac/`.
+
 Require `ISAACLAB_PYTHON` set and the package installed into the Isaac Lab environment (see [Isaac Lab setup](../README.md#isaac-lab-30--isaac-sim-61-python-312)).
 
 See [`docs/isaac_base_disturbance.md`](../docs/isaac_base_disturbance.md) for full launch commands and Isaac-specific options.
@@ -152,7 +161,7 @@ See [`docs/isaac_base_disturbance.md`](../docs/isaac_base_disturbance.md) for fu
 Keyboard-driven Ridgeback base with Pink IK/QP holding the Franka TCP.
 
 ```bash
-$ISAACLAB_PYTHON scripts/isaac/base_disturbance_keyboard.py --viz kit
+$ISAACLAB_PYTHON scripts/isaac/with_controller/base_disturbance_keyboard.py --viz kit
 ```
 
 ### `base_disturbance_impedance.py`
@@ -160,5 +169,5 @@ $ISAACLAB_PYTHON scripts/isaac/base_disturbance_keyboard.py --viz kit
 Same base-disturbance experiment with the torque-level impedance QP (default: `--control_hz 50`, `--physics_hz 200`).
 
 ```bash
-$ISAACLAB_PYTHON scripts/isaac/base_disturbance_impedance.py --viz kit
+$ISAACLAB_PYTHON scripts/isaac/with_controller/base_disturbance_impedance.py --viz kit
 ```

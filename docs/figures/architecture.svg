@@ -3282,7 +3282,7 @@ z
 " style="fill: #222222; stroke: #222222; stroke-width: 1.6; stroke-linecap: round"/>
    </g>
    <g id="text_15">
-    <!-- scripts/isaac/ridgeback_dr_demo.py -->
+    <!-- scripts/isaac/with_controller/ridgeback_dr_demo.py -->
     <g transform="translate(569.800156 89.323456) scale(0.11 -0.11)">
      <use xlink:href="#DejaVuSansMono-Bold-73"/>
      <use xlink:href="#DejaVuSansMono-Bold-63" transform="translate(60.205078 0)"/>

@@ -10,9 +10,10 @@ Inertia: ``--no_inertia_rescale`` leaves inertia untouched; by default it is sca
 (uniform-density assumption, same as ``randomize_rigid_body_mass``). Geometry scaling does NOT
 move the arm mount or change mass; combine with --base_mass if you want consistent density.
 
-Usage (from the Isaac Lab folder, headless):
+Usage (from the repo root, after the Isaac Lab setup in the root README):
 
-    uv run --extra isaacsim python ~/hybrid-rl-mpc-control/scripts/isaac/ridgeback_base_probe.py \
+    PYTHONPATH=~/workspace/hybrid-rl-mpc-control/src \
+        $ISAACLAB_PYTHON scripts/isaac/with_controller/ridgeback_base_probe.py \
         --base_mass 250 --robot_mass_scale 1.2 --base_scale 1.5 1.0 1.0
 """
 

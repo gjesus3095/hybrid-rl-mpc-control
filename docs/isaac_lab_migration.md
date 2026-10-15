@@ -1,6 +1,6 @@
 # mobile_franka on Isaac Lab 3.0 / Isaac Sim 6.x
 
-> Note: in this repo the demo lives at `scripts/isaac/ridgeback_demo.py`. Sections 2 and 4 below describe the original standalone `mobile_franka` repo and are kept for reference only.
+> Note: in this repo the demo lives at `scripts/isaac/with_controller/ridgeback_demo.py`. Sections 2 and 4 below describe the original standalone `mobile_franka` repo and are kept for reference only.
 
 How to recreate our Ridgeback-Franka demo on your installation and set up the shared repo.
 From now on, **Isaac Lab 3.0 is the version we develop on.**
@@ -46,7 +46,7 @@ If an empty viewport opens, the installation works. The first launch can take mo
 
 ## 2. Create the project repo
 
-Put the project folder **next to** Isaac Lab, not inside it. Use the files I sent (`scripts/isaac/ridgeback_demo.py`, `.gitignore`, `MIGRATION.md`):
+Put the project folder **next to** Isaac Lab, not inside it. Use the files I sent (`scripts/isaac/with_controller/ridgeback_demo.py`, `.gitignore`, `MIGRATION.md`):
 
 ```bash
 mkdir -p ~/repos/mobile_franka/scripts && cd ~/repos/mobile_franka
@@ -68,8 +68,8 @@ Activate the Python environment you installed Isaac Lab into, then from inside `
 
 ```bash
 # Linux
-<path-to-IsaacLab>/isaaclab.sh -p scripts/isaac/ridgeback_demo.py --viz kit   # GUI
-<path-to-IsaacLab>/isaaclab.sh -p scripts/isaac/ridgeback_demo.py             # headless
+<path-to-IsaacLab>/isaaclab.sh -p scripts/isaac/with_controller/ridgeback_demo.py --viz kit   # GUI
+<path-to-IsaacLab>/isaaclab.sh -p scripts/isaac/with_controller/ridgeback_demo.py             # headless
 ```
 ```bat
 REM Windows

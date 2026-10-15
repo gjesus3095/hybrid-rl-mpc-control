@@ -6,7 +6,7 @@ The scenarios are picked from a pool of randomized platforms to include small/li
 
 Usage (from the repo root, after the Isaac Lab setup in the root README):
 
-    $ISAACLAB_PYTHON scripts/isaac/compare_policies_video.py \
+    $ISAACLAB_PYTHON scripts/isaac/with_controller/compare_policies_video.py \
         --trained <run>/model_149.pt --untrained <run>/model_0.pt
 """
 
@@ -18,7 +18,7 @@ from isaaclab.app import add_launcher_args, launch_simulation
 
 from hybrid_control.rl.config import CONTROLLERS, saved_controller, saved_observation_cfg
 
-OUT_DIR = Path(__file__).resolve().parents[2] / "out"
+OUT_DIR = Path(__file__).resolve().parents[3] / "out"
 parser = argparse.ArgumentParser(description="Side-by-side video of a trained and an untrained base policy.")
 parser.add_argument("--trained", type=str, required=True)
 parser.add_argument("--untrained", type=str, required=True)

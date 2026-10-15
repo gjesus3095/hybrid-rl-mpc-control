@@ -7,7 +7,7 @@
 
 Usage (from the repo root, after the Isaac Lab setup in the root README):
 
-    $ISAACLAB_PYTHON scripts/isaac/check_stabilization_env.py --num_envs 16
+    $ISAACLAB_PYTHON scripts/isaac/with_controller/check_stabilization_env.py --num_envs 16
 """
 
 import argparse

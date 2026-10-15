@@ -5,10 +5,10 @@ Scenario (same for every env): settle with the arm folded -> arm swings to a str
 whose platform is too small or too light for their payload tip over; the others stay upright. Optionally
 the base follows ``--cmd`` once the arm is stretched.
 
-Usage (from the Isaac Lab folder):
+Usage (from the repo root, after the Isaac Lab setup in the root README):
 
-    PYTHONPATH=~/hybrid-rl-mpc-control/src uv run --extra isaacsim --extra video python \
-        ~/hybrid-rl-mpc-control/scripts/isaac/ridgeback_dr_demo.py --num_envs 8 --seed 0 --video --video
+    PYTHONPATH=~/workspace/hybrid-rl-mpc-control/src \
+        $ISAACLAB_PYTHON scripts/isaac/with_controller/ridgeback_dr_demo.py --num_envs 8 --seed 0 --video
 """
 
 import argparse
@@ -16,7 +16,7 @@ from pathlib import Path
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
-OUT_DIR = Path(__file__).resolve().parents[2] / "out"  # <repo>/out, not the Isaac Lab folder
+OUT_DIR = Path(__file__).resolve().parents[3] / "out"  # <repo>/out, not the Isaac Lab folder
 parser = argparse.ArgumentParser(description="Domain-randomized free-base Ridgeback-Franka envs.")
 parser.add_argument("--num_envs", type=int, default=8)
 parser.add_argument("--num_cols", type=int, default=4, help="Grid columns.")
