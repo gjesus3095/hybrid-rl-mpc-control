@@ -12,9 +12,8 @@ import torch
 
 @dataclass(frozen=True)
 class ObservationCfg:
-    lookahead: tuple[float, ...] = (0.0, 0.25, 0.5, 1.0, 1.5)  # reference lookahead times [s]
-    physical_params_in_actor: bool = True  # footprint, masses, payload, COM height; the critic always sees them
-    com_offset_in_actor: bool = True  # com_offset_norm (rho); the critic always sees it. False in runs from before it
+    physical_params_in_actor: bool = True  # footprint, masses, terminal mass, COM height; the critic always sees them
+    com_offset_in_actor: bool = True  # com_offset_norm (rho); the critic always sees it
 
 
 @dataclass
@@ -28,16 +27,12 @@ class Snapshot:
     lin_vel_w: torch.Tensor  # (N, 3) base velocity
     ang_vel_w: torch.Tensor  # (N, 3)
     com_total: torch.Tensor  # (N, 3)
-    com_arm: torch.Tensor  # (N, 3)
-    ee_pos: torch.Tensor  # (N, 3)  # TODO No used without controller
-    # arm_q: torch.Tensor  # (N, 7)
-    # arm_qd: torch.Tensor  # (N, 7)
-    ref: torch.Tensor  # (N, K, 3) reference lookahead # TODO No used without controller
-    # traj_centre: torch.Tensor  # (N, 3) centre of the reference trajectory
+    com_mechanism: torch.Tensor  # (N, 3)
+    joint_pos: torch.Tensor  # (N, 3), rad/rad/m
+    joint_vel: torch.Tensor  # (N, 3), rad/s, rad/s, m/s
     half_size: torch.Tensor  # (N, 2) half footprint length, width
-    params: torch.Tensor  # (N, P) [length, width, base_mass, base_com_z, payload, total_mass]
+    params: torch.Tensor  # (N, P) [length, width, base_mass, base_com_z, terminal mass, total_mass]
     last_action: torch.Tensor  # (N, 3)
-    # time_fraction: torch.Tensor  # (N,) episode progress in [0, 1]
 
 
 def to_base_frame(yaw: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
@@ -54,7 +49,7 @@ def to_base_frame(yaw: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
 def com_offset_norm(snap: Snapshot) -> torch.Tensor:
     """Max-norm distance of the total COM from the footprint centre, as a fraction of the half footprint (1 = edge).
 
-    Matches ``RidgebackDREnv.com_offset / half_length``.
+    One means the projected CoM is at the footprint edge.
     """
     rel = to_base_frame(snap.yaw, snap.com_total[:, :2] - snap.centre_xy)
     return (rel.abs() / snap.half_size).amax(dim=-1)
@@ -68,16 +63,14 @@ def observation_terms(snap: Snapshot, cfg: ObservationCfg) -> tuple[dict[str, to
     com_b = to_base_frame(snap.yaw, snap.com_total - centre3)
 
     actor = {
-        "ref_lookahead": to_base_frame(snap.yaw, snap.ref - centre3[:, None]).flatten(1),  # reference lookahead
-        # "traj_centre": to_base_frame(snap.yaw, snap.traj_centre - centre3),  # centre of the whole reference trajectory
         "com_total": com_b,  # total COM [m] (x, y, height)
         "com_norm": com_b[:, :2] / snap.half_size,  # total COM as a fraction of the half footprint
         "base_lin_vel": to_base_frame(snap.yaw, snap.lin_vel_w)[:, :2],
         "base_ang_vel": to_base_frame(snap.yaw, snap.ang_vel_w),  # (wx, wy) = roll/pitch rates, wz = yaw rate
         "roll": snap.roll[:, None],
         "pitch": snap.pitch[:, None],
-        "ee_pos": to_base_frame(snap.yaw, snap.ee_pos - centre3),
-        # "arm_q": snap.arm_q, "arm_qd": snap.arm_qd,
+        "joint_pos": snap.joint_pos,
+        "joint_vel": snap.joint_vel,
         "last_action": snap.last_action,
     }
     if cfg.physical_params_in_actor:
@@ -88,8 +81,7 @@ def observation_terms(snap: Snapshot, cfg: ObservationCfg) -> tuple[dict[str, to
     critic = dict(actor)
     if not cfg.com_offset_in_actor:
         critic["com_offset_norm"] = com_offset_norm(snap)[:, None]
-    critic["arm_com"] = to_base_frame(snap.yaw, snap.com_arm - centre3)
-    # critic["time_fraction"] = snap.time_fraction[:, None]
+    critic["mechanism_com"] = to_base_frame(snap.yaw, snap.com_mechanism - centre3)
     if not cfg.physical_params_in_actor:
         critic["physical_params"] = snap.params
     return actor, critic

@@ -24,7 +24,7 @@ from hybrid_control.robots.state import Pose
 ARM_JOINTS = tuple(f"panda_joint{i}" for i in range(1, 8))
 ROOT, TCP = "panda_link0", "panda_fingertip_centered"
 TCP_OFFSET = Pose(np.array([0.0, 0.0, 0.1121]), np.array([0.0, 0.0, 0.0, 1.0]))
-DT = 0.02  # 50 Hz control, as in scripts/isaac/base_disturbance_keyboard.py
+DT = 0.02  # 50 Hz control, as in scripts/isaac/with_controller/base_disturbance_keyboard.py
 DQ_MAX = np.array([2.175, 2.175, 2.175, 2.175, 2.61, 2.61, 2.61])
 CONFIG = IKQPConfig(-DQ_MAX, DQ_MAX, kp_pos=50.0, kp_ori=100.0, damping=1e5)
 Q_INIT = np.array([0.0, 0.0, 0.0, -np.pi / 2, 0.0, np.pi / 2, -np.pi / 4])

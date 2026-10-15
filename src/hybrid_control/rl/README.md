@@ -6,8 +6,8 @@ Two separate PPO policies (RSL-RL) run in Isaac Lab:
   velocities `(vx, vy, wz)` while an IK/QP or impedance Panda controller tracks a
   world-frame trajectory.
 - **Without controller** (`policy_no_controller/`): the policy commands the same
-  base velocities on a floating platform with a vertical lift, two planar revolute
-  joints, and a terminal mass. Random joint splines drive the mechanism through
+  base velocities on a floating platform with a vertical lift, roll/pitch revolute
+  joints (±90° each), and a terminal mass. Random joint splines drive the mechanism through
   finite simulator actuators. There is no Panda, IK/QP, or arm controller.
 
 The existing `train_base_policy.py`, `play_base_policy.py`, and video scripts
@@ -100,17 +100,19 @@ $ISAACLAB_PYTHON scripts/isaac/no_controller/train_moving_mass_policy.py \
     --resume "$CHECKPOINT" --num_envs 64 --max_iterations 500
 ```
 
-The joint order is `(revolute_1, revolute_2, lift)` in radians, radians, metres;
+The joint order is `(roll, pitch, lift)` in radians, radians, metres;
 base actions are yaw-frame `(vx, vy, wz)` in m/s, m/s, rad/s after scaling.
 Defaults are 120 Hz physics, 30 Hz policy, and 15-second episodes. The platform
 uses the controller case's base mass/footprint distributions. Its upper mechanism
-has 0.25 m links (0.25 kg each), a 0.5 kg carriage, 0–0.4 m lift travel, and a
+has a 0.5 m upright mast (0.25 kg), a 0.25 kg roll hub, a 0.5 kg carriage,
+0–0.4 m lift travel, and a
 terminal mass sampled uniformly from 1–5 kg. Geometry is fixed at spawn. Episode
-resets resample masses and trajectories. Upper bodies have visual geometry and
-physical inertia, but no collision shapes; only the platform collides with the
-ground; collisions between environment slots are filtered. This is an abstract disturbance mechanism, not a manufactured robot model.
+resets resample masses and trajectories. All bodies have rigid-body mass/inertia and collision shapes, including ground
+contacts for the mast and terminal mass during a fall. Nonadjacent self-collisions
+are enabled except between the carriage and the mast through its bearing; connected
+joint bodies and separate environment slots are filtered. This is an abstract disturbance mechanism, not a manufactured robot model.
 
-Cubic B-splines span each entire episode, with approximately two-second knot
+Cubic B-splines span each entire episode, with approximately one-second knot
 intervals and zero velocity/acceleration at both ends. Position and derivative
 control-point bounds limit each joint's motion; no state teleportation occurs
 during stepping. Each environment has its own seeded random stream, allowing
@@ -138,18 +140,19 @@ checkpoint-free baseline. Omitted fields retain defaults; unknown fields fail.
 For example:
 
 ```yaml
-environment_kind: moving_mass_v1
+environment_kind: moving_mass_v2
 episode_length_s: 15.0
 mechanism:
-  link_lengths: [0.25, 0.25]
+  mast_length: 0.5
   stiffness: [1000.0, 1000.0, 10000.0]
   damping: [100.0, 100.0, 500.0]
   effort_limit: [150.0, 150.0, 500.0]
 trajectory:
   difficulty: 1.0
-  knot_interval: 2.0
-  max_velocity: [1.0, 1.0, 0.15]
-  max_acceleration: [2.0, 2.0, 0.3]
+  knot_interval: 1.0
+  min_peak_velocity: [0.9, 0.9, 0.18]
+  max_velocity: [2.0, 2.0, 0.4]
+  max_acceleration: [6.0, 6.0, 1.2]
 domain_randomization:
   terminal_mass: [1.0, 5.0]
   platform:
@@ -169,3 +172,77 @@ Checkpoint tests require RSL-RL; those tests skip when it is unavailable. Isaac
 integration checks must use the configured Isaac Lab interpreter. Unit tests
 cover spline derivatives against SciPy, bounds, continuity, per-slot reset
 isolation, observations, rewards, and saved configuration compatibility.
+
+### Visual demos and physical probes
+
+The demo entry points call shared code in
+`sim_interfaces/isaac/moving_mass/demo.py`, `viz.py`, and `diagnostics.py`.
+
+```bash
+# Analog of ridgeback_dr_demo: randomized platforms driven by episode splines.
+$ISAACLAB_PYTHON scripts/isaac/no_controller/moving_mass_dr_demo.py --viz kit --plot
+
+# Upright -> tilt/lift -> hold, making static tipping easier to inspect.
+$ISAACLAB_PYTHON scripts/isaac/no_controller/moving_mass_dr_demo.py --scenario extend --viz kit
+
+# Isolate one joint: settle -> move -> hold -> return -> hold.
+$ISAACLAB_PYTHON scripts/isaac/no_controller/moving_mass_dr_demo.py \
+    --scenario joint_sweep --joint lift --num_envs 1 --viz kit --plot
+
+# Identical dynamics and spline targets: zero commands on the left, fixed commands on the right.
+# --num_envs denotes pairs in this script.
+$ISAACLAB_PYTHON scripts/isaac/no_controller/compare_moving_mass.py \
+    --num_envs 4 --cmd 0.2 0 0 --viz kit --plot
+
+# Replace the fixed command with an existing moving-mass checkpoint.
+$ISAACLAB_PYTHON scripts/isaac/no_controller/compare_moving_mass.py \
+    --checkpoint "$CHECKPOINT" --num_envs 4 --viz kit --plot
+
+# Optional MP4 recording (imageio/FFmpeg and Pillow required).
+$ISAACLAB_PYTHON scripts/isaac/no_controller/moving_mass_dr_demo.py --video --duration 5
+```
+
+Red markers show total CoM, green shows mechanism CoM, and orange shows the
+vertical ground projection. Comparison rows contain a matched pair, with identical
+physical parameters and complete joint-target splines; actual joint motion can
+differ because the bases react differently. There are no automatic resets, so
+falls remain visible. The zero-command side still uses the base velocity actuator,
+which brakes drift; it is not a completely unactuated base.
+
+Both demos save CSV traces under `out/` by default, including joint targets and
+measurements, tilt, normalized CoM offset, commanded base velocity, tipping
+status, and analytical CoM error. `--plot` adds a PNG with stability/motion curves;
+`--video` streams frames to MP4. Use `--csv` and `--video_path` to change outputs.
+`--duration` truncates a spline preview without changing the sampled trajectory;
+previews longer than an episode hold its final target. For scripted probes, use
+`--settle`, `--swing`, and `--hold`. Use `--no_markers` for headless physics-only runs.
+
+The existing `check_moving_mass_env.py` additionally verifies the analytical CoM
+against measured joint positions during motion. It remains the automated physics
+check; the demos intentionally allow tipping and print first-tip times.
+
+Check domain randomization independently of training:
+
+```bash
+$ISAACLAB_PYTHON scripts/isaac/no_controller/check_moving_mass_randomization.py \
+    --num_envs 8 --resets 5 --seed 0
+```
+
+This checks configured bounds, actual simulator masses and CoM, physical-parameter
+observations, fixed footprints across resets, fresh bounded splines, and unchanged
+neighboring slots during partial resets. It prints sampled min/mean/max values;
+these are diagnostics, not a statistical distribution-fit test. `--config` supports
+checking custom ranges, including deliberately constant parameters.
+
+The roll/pitch model is `moving_mass_v2`; older planar-mechanism checkpoints and
+YAML configurations are rejected because their joint meanings and dynamics differ.
+Start a new training run. Both angular joints span −90° to +90°. The lift stays
+vertical relative to the base; roll about X and then pitch about the rotated Y
+axis swing the mast radially from its upright pose.
+
+`min_peak_velocity` sets each joint's minimum attained speed per episode (rad/s,
+rad/s, m/s), scaled by difficulty. It does not impose nonzero velocity at smooth
+reversals or endpoints. New defaults increase speed/acceleration limits and halve
+the knot interval. Infeasible custom speed floors raise an error rather than
+silently creating a slower trajectory. Individual probes accept `--joint roll`,
+`--joint pitch`, or `--joint lift`.

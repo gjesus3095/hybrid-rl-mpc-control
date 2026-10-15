@@ -8,7 +8,7 @@ tracks the world-frame reference trajectory:
   ``panda_hand`` (position and the orientation at reset). It knows nothing about the base: because the target is
   fixed in the world frame, base motion shows up as a tracking error that the QP corrects.
 - ``"impedance"``: the torque-level impedance QP (``controllers/impedance``) computes arm joint torques for the TCP
-  ``panda_fingertip_centered``, set up as in ``scripts/isaac/base_disturbance_impedance.py``: full pose, null-space
+  ``panda_fingertip_centered``, set up as in ``scripts/isaac/with_controller/base_disturbance_impedance.py``: full pose, null-space
   posture torque, manipulability floor, joint-limit barriers and the commanded base twist as feedforward. The arm's
   implicit PD gains are zeroed (pure effort control); the QP compensates gravity.
 
@@ -56,7 +56,7 @@ class IKCfg:
 
 @dataclass(frozen=True)
 class ImpedanceCfg:
-    """Impedance QP (``controller="impedance"``), tuned as in ``scripts/isaac/base_disturbance_impedance.py``."""
+    """Impedance QP (``controller="impedance"``), tuned as in ``scripts/isaac/with_controller/base_disturbance_impedance.py``."""
 
     kp_pos: float = 400.0  # 1/s², critically damped
     kp_ori: float = 200.0

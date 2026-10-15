@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import dataclasses
 
-from hybrid_control.rl.policy_with_controller.observations import ObservationCfg
-from hybrid_control.rl.policy_with_controller.qp_pool import CONTROLLERS  # noqa: F401  (re-exported for the scripts' --controller choices)
+if TYPE_CHECKING:
+    from hybrid_control.rl.policy_with_controller.observations import ObservationCfg
+
+CONTROLLERS = ("ik_qp", "impedance")  # backwards-compatible script choices
 
 
 def _saved_env_cfg(checkpoint: str) -> dict:
@@ -27,6 +30,8 @@ def saved_controller(checkpoint: str, default: str = "ik_qp") -> str:
 def saved_observation_cfg(checkpoint: str) -> ObservationCfg:
     """Observation config a checkpoint was trained with, so its network input size matches. Options missing from an
     older ``env.yaml`` take the value they had before they existed (``com_offset_in_actor``: False)."""
+    from hybrid_control.rl.policy_with_controller.observations import ObservationCfg
+
     saved = {"com_offset_in_actor": False, **_saved_env_cfg(checkpoint).get("observation", {})}
     names = {f.name for f in dataclasses.fields(ObservationCfg)}
     return ObservationCfg(**{k: tuple(v) if isinstance(v, list) else v for k, v in saved.items() if k in names})
