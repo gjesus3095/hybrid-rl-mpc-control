@@ -6,8 +6,8 @@ from pathlib import Path
 
 import dataclasses
 
-from .observations import ObservationCfg
-from .qp_pool import CONTROLLERS  # noqa: F401  (re-exported for the scripts' --controller choices)
+from hybrid_control.rl.policy_with_controller.observations import ObservationCfg
+from hybrid_control.rl.policy_with_controller.qp_pool import CONTROLLERS  # noqa: F401  (re-exported for the scripts' --controller choices)
 
 
 def _saved_env_cfg(checkpoint: str) -> dict:

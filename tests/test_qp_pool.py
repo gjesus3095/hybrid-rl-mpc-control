@@ -9,9 +9,9 @@ from hybrid_control.controllers.impedance.impedance_control import (  # noqa: E4
 from hybrid_control.controllers.ik_qp.config import IKQPConfig, PoseTarget  # noqa: E402
 from hybrid_control.controllers.ik_qp.ik_qp import PinkInverseKinematicsController  # noqa: E402
 from hybrid_control.controllers.ik_qp.parallel import ArrayRobotModel  # noqa: E402
-from hybrid_control.rl.qp_pool import QPPool  # noqa: E402
+from hybrid_control.rl.policy_with_controller.qp_pool import QPPool  # noqa: E402
 from hybrid_control.robots.state import Pose  # noqa: E402
-from hybrid_control.rl.qp_worker import _ArrayTorqueModel  # noqa: E402
+from hybrid_control.rl.policy_with_controller.qp_worker import _ArrayTorqueModel  # noqa: E402
 
 N_ENVS, N_DOF = 7, 7
 JOINTS = [f"panda_joint{i}" for i in range(1, 8)]

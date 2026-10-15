@@ -17,7 +17,7 @@ import numpy as np
 from hybrid_control.controllers.ik_qp.config import IKQPConfig, PoseTarget
 from hybrid_control.robots.model import TorqueRobotModel
 from hybrid_control.robots.state import CenterOfMassState, JointState, Pose
-from hybrid_control.rl.qp_pool import views
+from hybrid_control.rl.policy_with_controller.qp_pool import views
 
 
 def _pose(row: np.ndarray) -> Pose:
