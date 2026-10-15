@@ -2,7 +2,8 @@
 
 COM markers: arm COM (green) and total COM (red) as spheres, plus a dark-red disc on the platform's top plate at the
 total COM's (x, y), so it is visible whether the COM lies over the footprint even when the sphere is inside the opaque
-platform. Reference markers: the reference path (yellow dots) and the current target (large yellow sphere).
+platform. Reference markers: the reference points the policy observes (its lookahead times), coloured from yellow
+(now) to green (furthest ahead). They are small, so the end effector stays visible.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from .robot import STOCK_HEIGHT
 
 # name: (RGB, radius) -- legend colours for the COM spheres
 COM_MARKERS = {"arm": ((0.1, 0.9, 0.2), 0.045), "total": ((1.0, 0.1, 0.1), 0.055)}
-REF_COLOR = (1.0, 0.85, 0.1)
+REF_NEAR, REF_FAR = (1.0, 0.85, 0.1), (0.15, 0.75, 0.15)  # yellow (current target) -> green (furthest lookahead)
 PLATE_Z = STOCK_HEIGHT + 0.004  # just above the platform's top face
 
 
@@ -46,28 +47,29 @@ class ComMarkers:
             self.views[name].set_world_poses(positions=wp.from_torch(pos.contiguous(), dtype=wp.vec3f))
 
 
-class ReferenceMarkers:
-    """The reference path (``n_path`` dots per env, static between resets) and the current target sphere."""
+def ref_colors(n: int) -> list[tuple[float, float, float]]:
+    """``n`` colours blending linearly from ``REF_NEAR`` to ``REF_FAR``."""
+    return [tuple(a + (b - a) * j / max(n - 1, 1) for a, b in zip(REF_NEAR, REF_FAR)) for j in range(n)]
 
-    def __init__(self, num_envs: int, device, n_path: int = 60):
+
+class ReferenceMarkers:
+    """``n_points`` reference dots per env at the policy's lookahead times, yellow (now) to green (furthest)."""
+
+    def __init__(self, num_envs: int, device, n_points: int):
         from isaaclab.sim.views import FrameView
 
-        self.num_envs, self.n_path = num_envs, n_path
-        dot = sim_utils.SphereCfg(radius=0.02, visual_material=_visual_material(REF_COLOR))
-        target = sim_utils.SphereCfg(radius=0.055, visual_material=_visual_material(REF_COLOR))
+        self.num_envs, self.n_points = num_envs, n_points
+        dots = [sim_utils.SphereCfg(radius=0.025, visual_material=_visual_material(c)) for c in ref_colors(n_points)]
         for i in range(num_envs):
-            for j in range(n_path):
-                dot.func(f"/World/Markers/ref_{i:03d}/path_{j:03d}", dot, translation=(0.0, 0.0, 3.0))
-            target.func(f"/World/Markers/ref_{i:03d}/target", target, translation=(0.0, 0.0, 3.0))
-        self.path_view = FrameView("/World/Markers/ref_.*/path_[0-9]+", device=device)
-        self.target_view = FrameView("/World/Markers/ref_.*/target", device=device)
+            for j, dot in enumerate(dots):
+                dot.func(f"/World/Markers/ref_{i:03d}/point_{j:02d}", dot, translation=(0.0, 0.0, 3.0))
+        self.view = FrameView("/World/Markers/ref_.*/point_[0-9]+", device=device)
 
-    def set_path(self, path_w: torch.Tensor):
-        """``path_w`` (N, n_path, 3): world positions of the dots, env-major (matches the sorted prim names)."""
-        self.path_view.set_world_poses(positions=wp.from_torch(path_w.reshape(-1, 3).contiguous(), dtype=wp.vec3f))
-
-    def set_target(self, target_w: torch.Tensor):
-        self.target_view.set_world_poses(positions=wp.from_torch(target_w.contiguous(), dtype=wp.vec3f))
+    def update(self, env):
+        """Move the dots to the reference lookahead of ``env`` (a ``BaseStabilizationEnv``) at its current time."""
+        t = env.episode_length_buf.float() * env.dt
+        points = env.traj.lookahead(t, env.lookahead) + env.env.origins[:, None]  # (N, n_points, 3), env-major
+        self.view.set_world_poses(positions=wp.from_torch(points.reshape(-1, 3).contiguous(), dtype=wp.vec3f))
 
 
 def project(points: torch.Tensor, eye, target, width: int, height: int, focal: float = 24.0, aperture: float = 20.955):
@@ -88,14 +90,15 @@ def project(points: torch.Tensor, eye, target, width: int, height: int, focal: f
 
 def _legend(draw, width, pad, font, kw, y0):
     """Colour legend of the markers in the top-right corner."""
-    entries = [("arm COM", COM_MARKERS["arm"][0]), ("total COM (+ plate projection)", COM_MARKERS["total"][0]),
-               ("reference path / target", REF_COLOR)]
-    for i, (label, rgb) in enumerate(entries):
+    entries = [("arm COM", [COM_MARKERS["arm"][0]]), ("total COM (+ plate projection)", [COM_MARKERS["total"][0]]),
+               ("reference lookahead (now -> ahead)", [REF_NEAR, REF_FAR])]
+    for i, (label, colors) in enumerate(entries):
         tw = draw.textlength(label, font=font)
         y = y0 + i * 28
         draw.text((width - pad - tw, y), label, font=font, fill=(255, 255, 255), **kw)
-        draw.ellipse((width - pad - tw - 26, y + 2, width - pad - tw - 8, y + 20),
-                     fill=tuple(int(255 * c) for c in rgb), outline=(0, 0, 0), width=2)
+        for j, rgb in enumerate(reversed(colors)):
+            x = width - pad - tw - 26 - 20 * j
+            draw.ellipse((x, y + 2, x + 18, y + 20), fill=tuple(int(255 * c) for c in rgb), outline=(0, 0, 0), width=2)
 
 
 def overlay(frame, env, labels_px, t: float):

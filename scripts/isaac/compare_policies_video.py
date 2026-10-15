@@ -83,7 +83,7 @@ def main():
         from hybrid_control.sim_interfaces.isaac.ridgeback.viz import ComMarkers, ReferenceMarkers, overlay_compare, project
 
         markers = ComMarkers(base_env.num_envs, sim.device)
-        ref_markers = ReferenceMarkers(base_env.num_envs, sim.device)
+        ref_markers = ReferenceMarkers(base_env.num_envs, sim.device, len(saved_observation_cfg(args_cli.trained).lookahead))
         cameras = [
             Camera(
                 cfg=CameraCfg(
@@ -107,8 +107,6 @@ def main():
             tensor = getattr(env.traj, name)
             tensor[k + 1 :] = tensor[1 : k + 1]
         env._obs = env._compute_obs()
-        zeros = torch.zeros(n, device=dev)
-        ref_markers.set_path(env.traj.lookahead(zeros, torch.linspace(0.0, args_cli.seconds, ref_markers.n_path, device=dev)) + base_env.origins[:, None])
 
         runner = OnPolicyRunner(env, make_runner_cfg(), log_dir=None, device=str(dev))
         runner.load(args_cli.trained)
@@ -149,7 +147,7 @@ def main():
                     if math.isnan(tip_times[i]):
                         tip_times[i] = t
                 markers.update(base_env)
-                ref_markers.set_target(env.traj.position(env.episode_length_buf.float() * env.dt) + base_env.origins)
+                ref_markers.update(env)
                 for cam in cameras:
                     cam.update(env.dt)
                 frame = np.concatenate(

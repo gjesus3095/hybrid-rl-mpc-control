@@ -108,7 +108,7 @@ def main():
         from isaaclab_physx.renderers import IsaacRtxRendererCfg
 
         markers = ComMarkers(n, sim.device)
-        ref_markers = ReferenceMarkers(n, sim.device)
+        ref_markers = ReferenceMarkers(n, sim.device, len(saved_observation_cfg(args_cli.checkpoint).lookahead))
         camera = Camera(
             cfg=CameraCfg(
                 prim_path="/World/RecordCam", update_period=0.0, height=RES[1], width=RES[0], data_types=["rgb"],
@@ -123,12 +123,10 @@ def main():
         runner = OnPolicyRunner(env, make_runner_cfg(), log_dir=None, device=str(dev))
         runner.load(args_cli.checkpoint)
         policy = runner.get_inference_policy(device=str(dev))
-        horizon = torch.linspace(0.0, env.scfg.episode_length_s, ref_markers.n_path, device=dev)
 
         def new_episode(e):
             """Reset env ``e`` (fresh dynamics and trajectory), cut the camera to it, return (obs, label pixel)."""
             env._reset_idx(torch.tensor([e], device=dev))
-            ref_markers.set_path(env.traj.lookahead(torch.zeros(n, device=dev), horizon) + base_env.origins[:, None])
             origin = base_env.origins[e]
             eye, target = origin + torch.tensor(CAM_OFFSET, device=dev), origin + torch.tensor(LOOK_OFFSET, device=dev)
             camera.set_world_poses_from_view(eye[None], target[None])
@@ -158,7 +156,7 @@ def main():
                     hold = int((args_cli.hold_tipped if failed else args_cli.hold_end) / env.dt)
                 status = f"TIPPED at {t_tip:.1f} s" if finished and not outcomes[-1] else ("completed" if finished else "upright")
                 markers.update(base_env)
-                ref_markers.set_target(env.traj.position(env.episode_length_buf.float() * env.dt) + base_env.origins)
+                ref_markers.update(env)
                 camera.update(env.dt)
                 frame = camera.data.output["rgb"].torch[0, ..., :3].cpu().numpy()
                 rho = float(base_env.com_offset[episode] / base_env.half_length[episode])

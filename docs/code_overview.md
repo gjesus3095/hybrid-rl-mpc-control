@@ -162,7 +162,7 @@ RidgebackDREnv (batched, DR)  <--  BaseStabilizationEnv (rl/env.py, RSL-RL VecEn
 | `rl/trajectories.py` | World-frame random reference trajectories (fixed points + Lissajous), reachable from the spawn pose |
 | `rl/config.py` | RSL-RL PPO runner config (dict) |
 | `isaac/ridgeback/arm_model.py` | `ArmBatch` (one GPU->CPU snapshot per QP tick) and `IsaacArmModel(RobotModel)` per env |
-| `isaac/ridgeback/viz.py` | COM markers (arm, total + plate projection), reference path/target markers, overlays |
+| `isaac/ridgeback/viz.py` | COM markers (arm, total + plate projection), reference lookahead markers (policy lookahead times, yellow now -> green ahead), overlays |
 | `scripts/isaac/train_base_policy.py` | Training entry point; TensorBoard logs in `<repo>/logs/base_policy/<run>/` |
 | `scripts/isaac/play_base_policy.py` | Deterministic evaluation (failures, COM offset, base-motion statistics; `--zero_policy` baseline) |
 | `scripts/isaac/compare_policies_video.py` | Side-by-side video of two checkpoints on identical scenarios, with live CoM-offset bars |
