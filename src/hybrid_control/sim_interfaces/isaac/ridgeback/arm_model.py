@@ -105,6 +105,10 @@ class ArmBatch:
         """(n, 2) joint position limits."""
         return np.stack(self.limits, axis=-1)
 
+    def ee_pose_t(self) -> tuple[torch.Tensor, torch.Tensor]:
+        """Live end-effector position (N, 3) and xyzw quaternion (N, 4) in the world frame, on the simulation device."""
+        return self._ee_pose_t()
+
     def ee_pos_t(self) -> torch.Tensor:
         """Live end-effector positions (N, 3) in the world frame, on the simulation device (no refresh needed)."""
         return self._ee_pose_t()[0]

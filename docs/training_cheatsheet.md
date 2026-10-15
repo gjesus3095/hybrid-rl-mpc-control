@@ -56,6 +56,27 @@ $PY $R/scripts/isaac/play_base_policy.py --checkpoint $CK --num_envs 128 --episo
 $PY $R/scripts/isaac/play_base_policy.py --checkpoint $CK --num_envs 128 --episodes 3 --qp_workers 32 --zero_policy
 ```
 
+## Benchmark (deterministic evaluation set)
+
+Five sets of 100 scenarios, identical for every policy (`src/hybrid_control/rl/evaluation/`): `fixed`, `sine`, `poly`
+(training-style), `poly_far` (quintic whose B is 0.9-2 m from the arm base, outside the 0.8 m training reach, A -> B timed
+at the training mean speed 0.25 m/s) and `rigid` (constant-speed straight legs, 0 / 1 / 2 rounded 90 degree bends, inside the
+training workspace). Slot `j` has footprint `j` in every set; each scenario has its own mass / payload.
+
+```bash
+# print the benchmark fingerprint and statistics, plot it (no Isaac needed)
+PYTHONPATH=$R/src python3 $R/scripts/generate_eval_set.py --plot $R/out/eval/benchmark.png
+# play a policy on it (about 10 min); logs + summary.json go to out/eval/<run>_<model>/
+$PY $R/scripts/isaac/evaluate_policy.py --checkpoint $CK --qp_workers 32
+$PY $R/scripts/isaac/evaluate_policy.py --zero_policy --qp_workers 32      # baseline
+# smoke test: first 8 scenarios of one set (same scenarios as in the full run)
+$PY $R/scripts/isaac/evaluate_policy.py --checkpoint $CK --sets poly_far --num_scenarios 8 --qp_workers 8
+```
+
+`<set>.npz` holds per-step arrays `(scenario, step, dim)` (see `LOG_FIELDS` in `evaluation/metrics.py`: reference, TCP pose
+and error, base state, COM and its margin to the footprint edge, arm joints, actions) plus `valid` (steps that count: within
+the scenario and up to the failure) and `fail_step`. Replays of the same policy are identical on this machine.
+
 ## Videos (written to `$R/out/`, not tracked by git)
 
 ```bash
