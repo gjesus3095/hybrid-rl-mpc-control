@@ -37,6 +37,10 @@ echo "==> Installing hybrid-rl-ik-control in editable mode..."
 uv pip install --python "$PYTHON" --constraint "$BEFORE" -e "$REPO_ROOT"
 echo
 
+echo "==> Installing video recording deps..."
+uv pip install --python "$PYTHON" "moviepy>=1.0.3,<2.0.0.dev0"
+echo
+
 echo "==> Snapshotting environment (after)..."
 "$PYTHON" -c "
 import importlib.metadata as m
