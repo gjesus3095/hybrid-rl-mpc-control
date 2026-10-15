@@ -13,9 +13,9 @@ Modes for the policy (``--mode``):
   none           no policy: zero base command (base parked), only the arm controller acts. The checkpoint is still
                  needed to pick the arm controller it was trained with.
 
-Usage (from the Isaac Lab folder):
+Usage (from the repo root, after the Isaac Lab setup in the root README):
 
-    PYTHONPATH=~/hybrid-rl-mpc-control/src .venv/bin/python ~/hybrid-rl-mpc-control/scripts/isaac/record_episodes_video.py \
+    $ISAACLAB_PYTHON scripts/isaac/record_episodes_video.py \
         --checkpoint <run>/model_999.pt --title "TRAINED POLICY" --video_path out/trained_episodes.mp4
 """
 

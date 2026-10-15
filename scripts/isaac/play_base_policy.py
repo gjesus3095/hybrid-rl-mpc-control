@@ -1,9 +1,8 @@
 """Run a trained base policy (deterministic) with its QP arm controller in the loop and report how many episodes survive.
 
-Usage (from the Isaac Lab folder):
+Usage (from the repo root, after the Isaac Lab setup in the root README):
 
-    PYTHONPATH=~/hybrid-rl-mpc-control/src uv run --extra isaacsim python \
-        ~/hybrid-rl-mpc-control/scripts/isaac/play_base_policy.py --checkpoint <repo>/logs/base_policy/<run>/model_499.pt
+    $ISAACLAB_PYTHON scripts/isaac/play_base_policy.py --checkpoint logs/base_policy/<run>/model_499.pt
 """
 
 import argparse

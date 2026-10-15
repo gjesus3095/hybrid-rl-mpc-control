@@ -5,10 +5,9 @@
 3. Partial reset: resetting some envs must not disturb the others.
 4. Throughput: wall-clock cost of the QP loop and of whole policy steps.
 
-Usage (from the Isaac Lab folder):
+Usage (from the repo root, after the Isaac Lab setup in the root README):
 
-    PYTHONPATH=~/hybrid-rl-mpc-control/src uv run --extra isaacsim python \
-        ~/hybrid-rl-mpc-control/scripts/isaac/check_stabilization_env.py --num_envs 16
+    $ISAACLAB_PYTHON scripts/isaac/check_stabilization_env.py --num_envs 16
 """
 
 import argparse

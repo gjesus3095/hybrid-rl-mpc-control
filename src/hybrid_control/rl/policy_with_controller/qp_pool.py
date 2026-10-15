@@ -5,7 +5,7 @@
 ``ik_qp``, joint torques for ``impedance``). Each env's solve is done by ``qp_worker.make_solver``, so the serial
 path (``workers=0``) and the parallel path give the same results.
 
-Workers are plain subprocesses (``python -m hybrid_control.rl.qp_worker``) rather than ``multiprocessing`` children:
+Workers are plain subprocesses (``python -m hybrid_control.rl.policy_with_controller.qp_worker``) rather than ``multiprocessing`` children:
 they never fork a process that holds CUDA/Kit state and never re-import the training script, so the pool can be
 created after the simulator has started. Inputs and outputs travel through one shared-memory block; a one-line
 message over the worker's pipes signals each solve.
@@ -76,12 +76,12 @@ class QPPool:
         cfg = {"shm": self._shm.name, "controller": controller, "num_envs": num_envs, "n_dof": n_dof,
                "solver": solver_cfg}
         env = dict(os.environ, OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", MKL_NUM_THREADS="1")
-        src = str(Path(__file__).resolve().parents[2])  # make `hybrid_control` importable in the workers
+        src = str(Path(__file__).resolve().parents[3])  # make `hybrid_control` importable in the workers
         env["PYTHONPATH"] = os.pathsep.join([src] + [p for p in env.get("PYTHONPATH", "").split(os.pathsep) if p])
         for chunk in np.array_split(np.arange(num_envs), workers):
             wcfg = dict(cfg, start=int(chunk[0]), stop=int(chunk[-1]) + 1)
             self._procs.append(subprocess.Popen(
-                [sys.executable, "-m", "hybrid_control.rl.qp_worker", json.dumps(wcfg)],
+                [sys.executable, "-m", "hybrid_control.rl.policy_with_controller.qp_worker", json.dumps(wcfg)],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env,
             ))
         for p in self._procs:  # wait until every worker has attached and imported

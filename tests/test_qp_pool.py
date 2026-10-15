@@ -1,12 +1,14 @@
 import numpy as np
 import pytest
+import subprocess
+import sys
 
 pytest.importorskip("pink")
 
 from hybrid_control.controllers.impedance.impedance_control import (  # noqa: E402
     ImpedanceController, ImpedanceQPConfig, TaskSpaceTarget,
 )
-from hybrid_control.controllers.ik_qp.config import IKQPConfig, PoseTarget  # noqa: E402
+from hybrid_control.utils.control_utils import IKQPConfig  # noqa: E402
 from hybrid_control.controllers.ik_qp.ik_qp import PinkInverseKinematicsController  # noqa: E402
 from hybrid_control.controllers.ik_qp.parallel import ArrayRobotModel  # noqa: E402
 from hybrid_control.rl.policy_with_controller.qp_pool import QPPool  # noqa: E402
@@ -29,6 +31,26 @@ TAU = [87.0] * 4 + [12.0] * 3
 IMPEDANCE = {"acceleration_lower": [-15.0] * N_DOF, "acceleration_upper": [15.0] * N_DOF, "kp_pos": 400.0,
              "kp_ori": 200.0, "posture_kp": 0.0, "posture_kd": 0.0, "nullspace_posture": [0.0] * N_DOF}
 IMPEDANCE_CFG = {"joint_names": JOINTS, "frame": "tcp", "dt": DT, "torque_limit": TAU, "impedance": IMPEDANCE}
+
+
+def test_worker_module_is_discoverable_without_editable_install(monkeypatch, tmp_path):
+    """The pool must supply the source root after moving into policy_with_controller/."""
+    popen = subprocess.Popen
+
+    def checked_popen(args, **kwargs):
+        # -S excludes site-packages/editable installs; use the worker's actual PYTHONPATH.
+        with popen(
+            [sys.executable, "-S", "-c",
+             "import importlib.util, sys; assert importlib.util.find_spec(sys.argv[1])", args[2]],
+            env=kwargs["env"], cwd=tmp_path,
+        ) as probe:
+            assert probe.wait(timeout=10) == 0
+        return popen(args, **kwargs)
+
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    monkeypatch.setattr(subprocess, "Popen", checked_popen)
+    pool = QPPool("ik_qp", 1, N_DOF, IK_CFG, 1)
+    pool.close()
 
 
 def _run(pool, fill):
@@ -64,7 +86,7 @@ def test_ik_pool_matches_serial_pink_controller_and_respects_active_mask(workers
             assert np.array_equal(cmd[i], q[i])
             continue
         robot.env = i
-        expected = serial.compute(PoseTarget("panda_hand", Pose(target[i, :3], target[i, 3:])), DT).positions
+        expected = serial.compute(TaskSpaceTarget("panda_hand", Pose(target[i, :3], target[i, 3:])), DT).positions
         assert np.allclose(cmd[i], expected, atol=1e-6)
 
 
