@@ -24,6 +24,19 @@ def saved_controller(checkpoint: str, default: str = "ik_qp") -> str:
     return _saved_env_cfg(checkpoint).get("controller", default)
 
 
+def qp_solver_name(controller: str, ik_qp_solver: str) -> str:
+    """QP backend the arm controller solves with: ``ik_qp`` uses ``IKCfg.qp_solver``, ``impedance`` always uses OSQP
+    (its ``IKCfg.qp_solver`` is unused); ``"none"`` for a controller without a QP."""
+    return {"ik_qp": ik_qp_solver, "impedance": "osqp"}.get(controller, "none")
+
+
+def saved_qp_solver(checkpoint: str) -> str:
+    """QP backend a checkpoint was trained with (see ``qp_solver_name``). Runs from before ``IKCfg.qp_solver`` existed
+    solved the Pink IK with OSQP (the controller's default then)."""
+    saved = _saved_env_cfg(checkpoint)
+    return qp_solver_name(saved.get("controller", "ik_qp"), (saved.get("ik") or {}).get("qp_solver", "osqp"))
+
+
 def saved_observation_cfg(checkpoint: str) -> ObservationCfg:
     """Observation config a checkpoint was trained with, so its network input size matches. Options missing from an
     older ``env.yaml`` take the value they had before they existed (``com_offset_in_actor``: False)."""

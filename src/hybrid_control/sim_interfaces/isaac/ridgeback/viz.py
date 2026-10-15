@@ -132,12 +132,14 @@ def overlay(frame, env, labels_px, t: float):
     return np.asarray(image)
 
 
-def overlay_compare(frame, env, labels_px, t: float, group_titles, group_centres_px, divider_px, tip_times, rho=None):
+def overlay_compare(frame, env, labels_px, t: float, group_titles, group_centres_px, divider_px, tip_times, rho=None,
+                    group_subtitles=None):
     """Side-by-side comparison overlay: a title over each group of envs, a divider, per-env status tags.
 
     ``group_titles``: [(text, RGB)] per group; ``group_centres_px``: (G, 2) title anchors; ``divider_px``: x pixel of
     the line between the two groups; ``tip_times``: per-env time of tipping (nan if upright); ``rho``: optional
-    per-env CoM offset as a fraction of the half footprint (1 = at the edge), drawn as a live bar under each tag.
+    per-env CoM offset as a fraction of the half footprint (1 = at the edge), drawn as a live bar under each tag;
+    ``group_subtitles``: optional text per group under its title (e.g. the QP solver).
     """
     import numpy as np
     from PIL import Image, ImageDraw, ImageFont
@@ -153,6 +155,8 @@ def overlay_compare(frame, env, labels_px, t: float, group_titles, group_centres
     draw.line((divider_px, 0, divider_px, h), fill=(255, 255, 255), width=3)
     for (text, color), (u, _) in zip(group_titles, group_centres_px):
         draw.text((u, 45), text, font=big, fill=color, anchor="mm", **kw)
+    for text, (u, _) in zip(group_subtitles or [], group_centres_px):
+        draw.text((u, 85), text, font=tag, fill=(255, 255, 255), anchor="mm", **kw)
     for i, (u, v) in enumerate(labels_px.tolist()):
         if u == 0.0 and v == 0.0:  # no label for this env (e.g. an unused dummy env)
             continue

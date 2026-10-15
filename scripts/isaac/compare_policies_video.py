@@ -17,7 +17,7 @@ from pathlib import Path
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
-from hybrid_control.rl.config import CONTROLLERS, saved_controller, saved_observation_cfg
+from hybrid_control.rl.config import CONTROLLERS, qp_solver_name, saved_controller, saved_observation_cfg, saved_qp_solver
 
 OUT_DIR = Path(__file__).resolve().parents[2] / "out"
 parser = argparse.ArgumentParser(description="Side-by-side video of a trained and an untrained base policy.")
@@ -131,6 +131,9 @@ def main():
         titles_px = torch.tensor([[VIEW[0] / 2, 0.0], [1.5 * VIEW[0], 0.0]])
         divider_px = float(VIEW[0])
         titles = [("TRAINED POLICY", (130, 255, 130)), ("UNTRAINED POLICY", (255, 170, 90))]
+        eval_solver = qp_solver_name(env.scfg.controller, env.scfg.ik.qp_solver)
+        subtitles = [f"QP solver: training {saved_qp_solver(c)}, evaluation {eval_solver}"
+                     for c in (args_cli.trained, args_cli.untrained)]
 
         tip_times = [math.nan] * n
         frames = []
@@ -154,7 +157,7 @@ def main():
                     [cam.data.output["rgb"].torch[0, ..., :3].cpu().numpy() for cam in cameras], axis=1
                 ).copy()
                 rho = (base_env.com_offset / base_env.half_length).cpu().numpy()
-                frames.append(overlay_compare(frame, base_env, tag_px, t, titles, titles_px, divider_px, tip_times, rho))
+                frames.append(overlay_compare(frame, base_env, tag_px, t, titles, titles_px, divider_px, tip_times, rho, subtitles))
 
         for s in range(k):
             p = scenarios[s]

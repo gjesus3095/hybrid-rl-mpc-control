@@ -4,7 +4,8 @@ Every episode has its own platform (footprint, base mass, payload) and reference
 distribution. The footprint is fixed when an env is spawned, so each episode gets its own env, far apart from the others;
 the camera cuts to the active one and only that env is reset and driven. Tipped robots stay down for ``--hold_tipped``
 seconds before the next episode starts.
-Overlays: episode number and outcome history, live CoM-offset bar, platform parameters, reference path and target.
+Overlays: episode number and outcome history, live CoM-offset bar, platform parameters, QP solver (training and this
+run), reference path and target.
 
 Modes for the policy (``--mode``):
   deterministic  the network's mean action (what ``play_base_policy.py`` evaluates)
@@ -24,7 +25,7 @@ from pathlib import Path
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
-from hybrid_control.rl.config import CONTROLLERS, saved_controller, saved_observation_cfg
+from hybrid_control.rl.config import CONTROLLERS, qp_solver_name, saved_controller, saved_observation_cfg, saved_qp_solver
 
 OUT_DIR = Path(__file__).resolve().parents[2] / "out"
 parser = argparse.ArgumentParser(description="Record one env over multiple episodes.")
@@ -65,7 +66,7 @@ FOCAL = 16.0  # [mm]
 CAM_OFFSET, LOOK_OFFSET = (0.45, -3.3, 1.7), (0.45, 0.0, 0.55)  # relative to the real env's origin
 
 
-def overlay(frame, base_env, k, status, t_ep, episode, n_episodes, outcomes, title, tag_px, rho):
+def overlay(frame, base_env, k, status, t_ep, episode, n_episodes, outcomes, title, tag_px, rho, qp_text):
     from PIL import Image, ImageDraw, ImageFont
 
     image = Image.fromarray(np.asarray(frame, dtype=np.uint8))
@@ -80,6 +81,7 @@ def overlay(frame, base_env, k, status, t_ep, episode, n_episodes, outcomes, tit
     p = base_env.params[k]
     draw.text((20, 134), f"platform {p.footprint[0]:.2f} x {p.footprint[1]:.2f} m, {p.base_mass:.0f} kg, payload {p.payload:.1f} kg",
               font=tag, fill=(255, 255, 255), **kw)
+    draw.text((20, 164), qp_text, font=tag, fill=(255, 255, 255), **kw)
     # outcome history
     for i, ok in enumerate(outcomes):
         draw.text((20 + 34 * i, h - 52), "OK" if ok else "X", font=font, fill=(130, 255, 130) if ok else (255, 90, 90), **kw)
@@ -119,6 +121,8 @@ def main():
         base_env.start()
         env = BaseStabilizationEnv(base_env, StabilizationEnvCfg(controller=args_cli.controller, qp_workers=args_cli.qp_workers, observation=saved_observation_cfg(args_cli.checkpoint)), seed=args_cli.seed)
         env.auto_reset = False
+        qp_text = (f"QP solver: training {saved_qp_solver(args_cli.checkpoint)}, "
+                   f"evaluation {qp_solver_name(env.scfg.controller, env.scfg.ik.qp_solver)}")
         dev = env.device
         runner = OnPolicyRunner(env, make_runner_cfg(), log_dir=None, device=str(dev))
         runner.load(args_cli.checkpoint)
@@ -160,7 +164,7 @@ def main():
                 camera.update(env.dt)
                 frame = camera.data.output["rgb"].torch[0, ..., :3].cpu().numpy()
                 rho = float(base_env.com_offset[episode] / base_env.half_length[episode])
-                writer.append_data(overlay(frame, base_env, episode, status, t_ep, episode, k, outcomes, args_cli.title, tag_px, rho))
+                writer.append_data(overlay(frame, base_env, episode, status, t_ep, episode, k, outcomes, args_cli.title, tag_px, rho, qp_text))
                 if finished:
                     hold -= 1
                     if hold <= 0:
