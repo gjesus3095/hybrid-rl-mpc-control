@@ -7,13 +7,10 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from hybrid_control.controllers.impedance.impedance_control import (
-    ImpedanceController,
-    ImpedanceQPConfig,
-    TaskSpaceTarget,
-)
+from hybrid_control.controllers.impedance.impedance_control import ImpedanceController
+from hybrid_control.utils.control_utils import ImpedanceQPConfig, TaskSpaceTarget
 from hybrid_control.robots.state import JointPositionCommand, JointTorqueCommand, Pose
-from hybrid_control.sim_interfaces.mujoco.adapter import MujocoRobotModel, MujocoTorqueRobotModel
+from hybrid_control.sim_interfaces.mujoco.adapter import MujocoRobotModel
 from hybrid_control.sim_interfaces.mujoco.modifier import MujocoModifier
 from hybrid_control.utils.trajectories import (
     QuinticTrajectory,
@@ -32,7 +29,7 @@ DDQ_MAX = np.full(7, 50.0)
 def robot():
     model = MujocoModifier.build_torque_spec(XML_FILE, [a for _, a in PAIRS]).compile()
     data = mujoco.MjData(model)
-    robot = MujocoTorqueRobotModel(model, data, PAIRS)
+    robot = MujocoRobotModel(model, data, PAIRS, control_mode="torque")
     robot.initialize(
         Q_INIT,
         extra_joint_positions={"finger_joint1": 0.04, "finger_joint2": 0.04},
@@ -115,9 +112,9 @@ def test_torque_spec_turns_panda_servos_into_bounded_motors(robot):
 
 def test_adapters_reject_the_wrong_actuator_type(robot):
     with pytest.raises(ValueError, match="unit-gain torque motor"):
-        MujocoTorqueRobotModel.from_xml_path(XML_FILE, PAIRS)
+        MujocoRobotModel.from_xml_path(XML_FILE, PAIRS, control_mode="torque")
     with pytest.raises(ValueError, match="position servo"):
-        MujocoRobotModel(robot.model, robot.data, PAIRS)
+        MujocoRobotModel(robot.model, robot.data, PAIRS, control_mode="position")
     with pytest.raises(ValueError, match="Unknown actuator"):
         MujocoModifier.build_torque_spec(XML_FILE, ["missing"])
 

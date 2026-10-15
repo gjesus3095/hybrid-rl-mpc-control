@@ -19,8 +19,8 @@ from collections.abc import Mapping, Sequence
 
 import numpy as np
 
-from hybrid_control.controllers.ik_qp.config import IKQPConfig, PoseTarget
-from hybrid_control.robots.model import RobotModel
+from hybrid_control.utils.control_utils import IKQPConfig, TaskSpaceTarget
+from hybrid_control.robots.model import ControlMode, RobotModel
 from hybrid_control.robots.state import JointState, Pose
 
 
@@ -28,7 +28,12 @@ class ArrayRobotModel(RobotModel):
     """``RobotModel`` view of environment ``env`` in batched arrays: joint positions (N, n),
     position limits (N, n, 2) and the root-frame pose (N, 7, xyzw). Only what the Pink IK reads."""
 
+    @property
+    def control_mode(self) -> ControlMode:
+        return "position"
+
     def __init__(self, joint_names: Sequence[str], root_frame: str):
+        super().__init__()
         self._joint_names = tuple(joint_names)
         self.root_frame = root_frame
         self.env = 0
@@ -82,7 +87,7 @@ class _Solver:
         q_cmd, ok = q.copy(), np.ones(len(q), dtype=bool)
         for env in range(len(q)):
             robot.env = env
-            target = PoseTarget(frame_name, Pose(target_pose[env, :3], target_pose[env, 3:]))
+            target = TaskSpaceTarget(frame_name, Pose(target_pose[env, :3], target_pose[env, 3:]))
             try:
                 q_cmd[env] = self.controller.compute(target, dt).positions
             except NoSolutionFound:  # caller decides what to hold; q_cmd stays at q
@@ -129,6 +134,10 @@ class ParallelPinkIK:
 
     ``cpus`` optionally pins worker i to CPU ``cpus[i]`` (e.g. one per physical core).
     """
+
+    @property
+    def control_mode(self) -> ControlMode:
+        return "position"
 
     def __init__(self, num_workers: int, cpus: Sequence[int] | None = None):
         if num_workers < 0:

@@ -8,7 +8,7 @@ pin = pytest.importorskip("pinocchio")
 pytest.importorskip("pink")
 pytest.importorskip("daqp")
 
-from hybrid_control.controllers.ik_qp.config import IKQPConfig, PoseTarget
+from hybrid_control.utils.control_utils import IKQPConfig, TaskSpaceTarget
 from hybrid_control.controllers.ik_qp.ik_qp import PinkInverseKinematicsController
 from hybrid_control.controllers.ik_qp.parallel import ParallelPinkIK
 from hybrid_control.robots.state import Pose
@@ -42,7 +42,7 @@ def batch(rng):
 @pytest.mark.parametrize("workers", [0, 1, 3, 20])
 def test_matches_sequential_controller(workers):
     robots, targets, inputs = batch(np.random.default_rng(0))
-    expected = np.array([PinkInverseKinematicsController(r, CONFIG, solver="daqp").compute(PoseTarget(FRAME, t), DT)
+    expected = np.array([PinkInverseKinematicsController(r, CONFIG, solver="daqp").compute(TaskSpaceTarget(FRAME, t), DT)
                          .positions for r, t in zip(robots, targets)])
     with ParallelPinkIK(workers) as pool:
         pool.configure(ARM_JOINTS, CONFIG, solver="daqp")

@@ -16,11 +16,8 @@ from scipy.spatial.transform import Rotation
 from hybrid_control.sim_interfaces.mujoco.adapter import MujocoRobotModel
 from hybrid_control.sim_interfaces.mujoco.modifier import MujocoModifier
 from hybrid_control.controllers.base import Controller
-from hybrid_control.controllers.ik_qp.ik_qp_mujoco import (
-    IKQPConfig,
-    InverseKinematicsController,
-    PoseTarget,
-)
+from hybrid_control.controllers.ik_qp.ik_qp_mujoco import InverseKinematicsController
+from hybrid_control.utils.control_utils import IKQPConfig, TaskSpaceTarget
 from hybrid_control.robots.model import RobotModel
 from hybrid_control.robots.state import JointPositionCommand, Pose
 from hybrid_control.utils.logger import logger
@@ -82,7 +79,7 @@ _modifier = MujocoModifier(COM_MARKER_DIAMETER)
 def create_simulation() -> MujocoRobotModel:
     """Load the robot and set a consistent initial state for the tracked arm."""
     # The adapter validates the arm mapping before we start stepping the MuJoCo model.
-    robot = MujocoRobotModel.from_xml_path(XML_FILE, JOINT_ACTUATOR_PAIRS)
+    robot = MujocoRobotModel.from_xml_path(XML_FILE, JOINT_ACTUATOR_PAIRS, control_mode="position")
     robot.initialize(
         Q_INIT,
         extra_joint_positions={
@@ -94,7 +91,7 @@ def create_simulation() -> MujocoRobotModel:
     return robot
 
 
-def create_controller(robot: RobotModel) -> Controller[PoseTarget, JointPositionCommand]:
+def create_controller(robot: RobotModel) -> Controller[TaskSpaceTarget, JointPositionCommand]:
     """Build the IK/QP controller from the experiment tuning and the shared model API."""
     # The model supplies joint order and limits; the config only sets task-space gains and bounds.
     config = IKQPConfig(
@@ -124,8 +121,8 @@ def assert_within_limits(values, lower, upper, *, slack, label, context):
 
 def compute_checked_command(
     robot: RobotModel,
-    controller: Controller[PoseTarget, JointPositionCommand],
-    target: PoseTarget,
+    controller: Controller[TaskSpaceTarget, JointPositionCommand],
+    target: TaskSpaceTarget,
     dt: float,
     context: str,
 ) -> JointPositionCommand:
@@ -152,8 +149,8 @@ def compute_checked_command(
 
 def track_reference(
     robot: MujocoRobotModel,
-    controller: Controller[PoseTarget, JointPositionCommand],
-    target: PoseTarget,
+    controller: Controller[TaskSpaceTarget, JointPositionCommand],
+    target: TaskSpaceTarget,
     handle,
     context: str,
 ):
@@ -194,7 +191,7 @@ def track_reference(
     return data.time - start_time
 
 
-def assert_tracking_error(robot: RobotModel, target: PoseTarget, context: str):
+def assert_tracking_error(robot: RobotModel, target: TaskSpaceTarget, context: str):
     """Measure final Cartesian tracking error and fail if the target was not reached."""
     # Report both translational and rotational error in a compact, human-friendly form.
     actual_pose = robot.get_pose(target.frame_name)
@@ -270,7 +267,7 @@ def run_tracking(*, viewer=False, change_orientation=True):
     else:
         quaternions = np.tile(initial_pose.quaternion, (N_TARGETS, 1))
     targets = [
-        PoseTarget(FRAME_CONTROL, Pose(position, quaternion))
+        TaskSpaceTarget(FRAME_CONTROL, Pose(position, quaternion))
         for position, quaternion in zip(references, quaternions)
     ]
 

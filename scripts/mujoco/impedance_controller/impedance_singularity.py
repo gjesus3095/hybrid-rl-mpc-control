@@ -24,11 +24,8 @@ import time
 import mujoco
 import numpy as np
 
-from hybrid_control.controllers.impedance.impedance_control import (
-    ImpedanceController,
-    ImpedanceQPConfig,
-    TaskSpaceTarget,
-)
+from hybrid_control.controllers.impedance.impedance_control import ImpedanceController
+from hybrid_control.utils.control_utils import ImpedanceQPConfig, TaskSpaceTarget
 from hybrid_control.robots.state import Pose
 from hybrid_control.utils.logger import logger
 from hybrid_control.sim_interfaces.mujoco.modifier import MujocoModifier

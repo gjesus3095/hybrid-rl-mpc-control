@@ -61,7 +61,11 @@ from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR, retrieve_file_path
 from isaaclab_assets import RIDGEBACK_FRANKA_PANDA_CFG
 from isaaclab_physx.sim.schemas import PhysxRigidBodyCfg
 
-from hybrid_control.controllers.ik_qp.config import IKQPConfig
+from hybrid_control.utils.math_helpers import (
+    pose_to_matrix, poses_to_matrices, compose_poses, pose_yaw,
+    predict_after_base_motion, base_command_world, pose_error,
+)
+from hybrid_control.utils.control_utils import IKQPConfig
 from hybrid_control.controllers.ik_qp.ik_qp import DEFAULT_URDF, build_model
 from hybrid_control.controllers.ik_qp.parallel import ParallelPinkIK, physical_cpus
 from hybrid_control.robots.state import Pose
@@ -117,58 +121,6 @@ def tcp_offset() -> Pose:
     relative = world[TCP] * world["panda_hand"].GetInverse()  # Gf row-vector convention: TCP in hand
     rotation = relative.ExtractRotationQuat()
     return Pose(np.array(relative.ExtractTranslation()), np.array([*rotation.GetImaginary(), rotation.GetReal()]))
-
-
-def matrix(pose: Pose) -> np.ndarray:
-    T = np.eye(4)
-    T[:3, :3], T[:3, 3] = Rotation.from_quat(np.array(pose.quaternion)).as_matrix(), pose.position
-    return T
-
-
-def matrices(poses: np.ndarray) -> np.ndarray:
-    """(N, 7) poses (position, xyzw) -> (N, 4, 4) homogeneous transforms."""
-    T = np.tile(np.eye(4), (len(poses), 1, 1))
-    T[:, :3, :3], T[:, :3, 3] = Rotation.from_quat(poses[:, 3:]).as_matrix(), poses[:, :3]
-    return T
-
-
-def compose_batch(parent: np.ndarray, offset: Pose) -> np.ndarray:
-    """World poses (N, 7) of ``offset`` expressed in each of the ``parent`` poses (N, 7)."""
-    rotation = Rotation.from_quat(parent[:, 3:])
-    return np.c_[parent[:, :3] + rotation.apply(np.array(offset.position)),
-                 (rotation * Rotation.from_quat(np.array(offset.quaternion))).as_quat()]
-
-
-def yaws_of(poses: np.ndarray) -> np.ndarray:
-    R = Rotation.from_quat(poses[:, 3:]).as_matrix()
-    return np.arctan2(R[:, 1, 0], R[:, 0, 0])
-
-
-def predict_after_base_motion(base: np.ndarray, frame: np.ndarray, base_vel: np.ndarray) -> np.ndarray:
-    """World poses (N, 7) of ``frame`` after the base joints (world x, y, then yaw) move by base_vel*DT.
-
-    T' = Trans(dx, dy) @ B @ Rz(dyaw) @ B^-1 @ T, with B the current base_link pose; base, frame
-    (N, 7) world poses (xyzw), base_vel (N, 3).
-    """
-    B = matrices(base)
-    delta = np.tile(np.eye(4), (len(base), 1, 1))
-    delta[:, :3, :3] = Rotation.from_euler("z", base_vel[:, 2:3] * DT).as_matrix()
-    T = B @ delta @ np.linalg.inv(B) @ matrices(frame)
-    T[:, :2, 3] += base_vel[:, :2] * DT
-    return np.c_[T[:, :3, 3], Rotation.from_matrix(T[:, :3, :3]).as_quat()]
-
-
-def base_command_world(command: np.ndarray, base_yaws: np.ndarray) -> np.ndarray:
-    """Base-frame (vx, vy, wz) -> base joint velocities (N, 3): world vx, vy, wz."""
-    c, s = np.cos(base_yaws), np.sin(base_yaws)
-    return np.stack([c * command[0] - s * command[1], s * command[0] + c * command[1],
-                     np.full_like(base_yaws, command[2])], axis=1)
-
-
-def pose_errors(target: np.ndarray, pose: np.ndarray) -> np.ndarray:
-    """Position (m) and rotation-angle (rad) errors (N, 2) between (N, 7) poses."""
-    rotation = Rotation.from_quat(target[:, 3:]) * Rotation.from_quat(pose[:, 3:]).inv()
-    return np.c_[np.linalg.norm(target[:, :3] - pose[:, :3], axis=1), rotation.magnitude()]
 
 
 class PinocchioTcp:
@@ -314,7 +266,8 @@ def run(sim, scene, ik: ParallelPinkIK, camera=None):
     extra_frames = {TCP: ("panda_hand", tcp_offset())}
     logger.info("TCP offset panda_hand -> %s: %s m", TCP, np.round(extra_frames[TCP][1].position, 5))
     buffer = IsaacArticulationBuffer(articulation, ARM_JOINTS)
-    robot0 = IsaacRobotModel(buffer, 0, extra_frames)  # start-up checks only; the loop works on (N, ...) arrays
+    # Start-up checks only; the loop works on (N, ...) arrays.
+    robot0 = IsaacRobotModel(buffer, 0, extra_frames, expected_control_mode=ik.control_mode)
     body = {name: buffer.body_ids[name] for name in (BASE_LINK, ARM_ROOT, "panda_hand")}
     config = IKQPConfig(-DQ_MAX, DQ_MAX, kp_pos=KP_POS, kp_ori=KP_ORI, damping=DAMPING)
     ik.configure(ARM_JOINTS, config, root_frame=ARM_ROOT, solver=args.solver, extra_frames=extra_frames)
@@ -324,7 +277,7 @@ def run(sim, scene, ik: ParallelPinkIK, camera=None):
     def world_poses(name: str) -> np.ndarray:
         """(N, 7) world poses (position, xyzw) of a body or the TCP in the current buffer."""
         if name == TCP:
-            return compose_batch(buffer.body_pose[:, body["panda_hand"]], extra_frames[TCP][1])
+            return compose_poses(buffer.body_pose[:, body["panda_hand"]], extra_frames[TCP][1])
         return buffer.body_pose[:, body[name]].astype(float)
 
     # Fixed world TCP target per env; replace target_fn to track any path
@@ -335,7 +288,7 @@ def run(sim, scene, ik: ParallelPinkIK, camera=None):
         return initial
 
     # URDF vs simulator kinematics (logged, not enforced)
-    T_sim = np.linalg.inv(matrix(robot0.get_pose(ARM_ROOT))) @ matrix(robot0.get_pose(TCP))
+    T_sim = np.linalg.inv(pose_to_matrix(robot0.get_pose(ARM_ROOT))) @ pose_to_matrix(robot0.get_pose(TCP))
     T_urdf = fk.in_root(robot0.get_state().positions)
     logger.info("URDF vs USD TCP in panda_link0 (env 0): %.2f mm, %.2f mrad",
                 1e3 * np.linalg.norm(T_sim[:3, 3] - T_urdf[:3, 3]),
@@ -403,11 +356,11 @@ def run(sim, scene, ik: ParallelPinkIK, camera=None):
             # Errors of the previous step: tracking and one-step prediction
             tcp, base, link0 = world_poses(TCP), world_poses(BASE_LINK), world_poses(ARM_ROOT)
             targets = target_fn(sim_time)
-            errors = pose_errors(targets, tcp)
+            errors = pose_error(targets, tcp)
             pred_err = np.nan if predicted_tcp is None else np.linalg.norm(tcp[:, :3] - predicted_tcp, axis=1).max()
 
             command, phase = read_command(sim_time)
-            yaws = yaws_of(base)
+            yaws = pose_yaw(base)
             base_targets = base_command_world(command, yaws)
 
             # Markers show the state that is rendered now (before this step's QP and physics)
@@ -428,7 +381,7 @@ def run(sim, scene, ik: ParallelPinkIK, camera=None):
                 video.capture(sim_time, phase, command, errors[0], solve_env0, t_solve, num_envs)
 
             # 2.-3. Predicted base pose and the QP of all envs (same sim time for all)
-            link0_next = predict_after_base_motion(base, link0, base_targets)
+            link0_next = predict_after_base_motion(base, link0, base_targets, DT)
             q = buffer.joint_pos[:, buffer.joint_ids]
             t0 = time.perf_counter()
             q_cmd, ok = ik.compute(q, buffer.joint_pos_limits, link0_next, target_fn(sim_time + DT), TCP, DT)
@@ -442,7 +395,7 @@ def run(sim, scene, ik: ParallelPinkIK, camera=None):
             active = int(np.sum(np.abs(q_cmd - q) / DT >= DQ_MAX - 1e-6)
                          + np.sum(np.minimum(q_cmd - q_min, q_max - q_cmd) <= 1e-6))
             tcp_in_link0 = np.array([fk.in_root(q_env)[:, 3] for q_env in q_cmd])  # (N, 4) homogeneous
-            predicted_tcp = np.einsum("nij,nj->ni", matrices(link0_next), tcp_in_link0)[:, :3]
+            predicted_tcp = np.einsum("nij,nj->ni", poses_to_matrices(link0_next), tcp_in_link0)[:, :3]
 
             # 4. One CPU -> GPU write of all targets, then physics
             sync()

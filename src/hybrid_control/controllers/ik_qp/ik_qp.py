@@ -31,15 +31,12 @@ from pink.limits import Limit
 from pink.tasks import FrameTask
 
 from hybrid_control.controllers.base import Controller
-from hybrid_control.controllers.ik_qp.config import IKQPConfig, PoseTarget
-from hybrid_control.robots.model import RobotModel
+from hybrid_control.utils.math_helpers import pose_to_se3
+from hybrid_control.utils.control_utils import IKQPConfig, TaskSpaceTarget
+from hybrid_control.robots.model import ControlMode, RobotModel
 from hybrid_control.robots.state import JointPositionCommand, Pose
 
 DEFAULT_URDF = files("hybrid_control.sim_interfaces.isaac.assets.franka") / "lula_franka_gen.urdf"
-
-
-def _se3(pose: Pose) -> pin.SE3:
-    return pin.SE3(pin.Quaternion(pose.quaternion).toRotationMatrix(), pose.position)
 
 
 def build_model(urdf_path=DEFAULT_URDF, extra_frames: Optional[Mapping[str, Tuple[str, Pose]]] = None) -> pin.Model:
@@ -51,7 +48,7 @@ def build_model(urdf_path=DEFAULT_URDF, extra_frames: Optional[Mapping[str, Tupl
         parent_id = model.getFrameId(parent)
         frame = model.frames[parent_id]
         joint = frame.parentJoint if hasattr(frame, "parentJoint") else frame.parent  # Pinocchio 3 / 2.6
-        model.addFrame(pin.Frame(name, joint, parent_id, frame.placement * _se3(offset), pin.FrameType.OP_FRAME))
+        model.addFrame(pin.Frame(name, joint, parent_id, frame.placement * pose_to_se3(offset), pin.FrameType.OP_FRAME))
     return model
 
 
@@ -67,7 +64,7 @@ class _JointBoxLimit(Limit):
         return self.G, np.hstack([self.upper * dt, -self.lower * dt])
 
 
-class PinkInverseKinematicsController(Controller[PoseTarget, JointPositionCommand]):
+class PinkInverseKinematicsController(Controller[TaskSpaceTarget, JointPositionCommand]):
     """Same objective and constraints as ``ik_qp_mujoco.InverseKinematicsController``, solved with Pink.
 
     Kinematics come from the URDF, joint state/limits and the root-frame pose from ``robot``.
@@ -85,10 +82,14 @@ class PinkInverseKinematicsController(Controller[PoseTarget, JointPositionComman
     # with an active bound. polish=True recovers the exact active set.
     SOLVER_OPTIONS = {"osqp": {"eps_abs": 1e-7, "eps_rel": 1e-7, "polish": True}, "daqp": {}}
 
+    @property
+    def control_mode(self) -> ControlMode:
+        return "position"
+
     def __init__(self, robot: RobotModel, config: IKQPConfig, urdf_path=DEFAULT_URDF,
                  root_frame: str = "panda_link0", solver: str = "osqp",
                  extra_frames: Optional[Mapping[str, Tuple[str, Pose]]] = None):
-        self.robot = robot
+        super().__init__(robot)
         self.config = config
         self.root_frame = root_frame
         if solver not in self.SOLVER_OPTIONS or solver not in qpsolvers.available_solvers:
@@ -128,7 +129,7 @@ class PinkInverseKinematicsController(Controller[PoseTarget, JointPositionComman
             )
         return self._tasks[frame_name]
 
-    def compute(self, target: PoseTarget, dt: float) -> JointPositionCommand:
+    def compute(self, target: TaskSpaceTarget, dt: float) -> JointPositionCommand:
         """Return q + dq*dt in robot joint order, with dq from the Pink QP (dt in seconds).
 
         In Pink's variable Delta_q = dq*dt the problem is
@@ -139,8 +140,8 @@ class PinkInverseKinematicsController(Controller[PoseTarget, JointPositionComman
         """
         if not np.isfinite(dt) or dt <= 0:
             raise ValueError("dt must be finite and positive")
-        if not isinstance(target, PoseTarget):
-            raise TypeError("target must be a PoseTarget")
+        if not isinstance(target, TaskSpaceTarget):
+            raise TypeError("target must be a TaskSpaceTarget")
         config = self.config
         q = self.robot.get_state().positions
         q_min, q_max = (np.asarray(limit, dtype=float) for limit in self.robot.position_limits)
@@ -151,7 +152,7 @@ class PinkInverseKinematicsController(Controller[PoseTarget, JointPositionComman
 
         # 2. World target -> URDF world frame: T_urdf_root * T_world_root^-1 * T_world_target
         T_urdf_root = self._configuration.get_transform_frame_to_world(self.root_frame)
-        target_urdf = T_urdf_root * _se3(self.robot.get_pose(self.root_frame)).actInv(_se3(target.pose))
+        target_urdf = T_urdf_root * pose_to_se3(self.robot.get_pose(self.root_frame)).actInv(pose_to_se3(target.pose))
         pos_task, ori_task = self._frame_tasks(target.frame_name)
         for task in (pos_task, ori_task):
             task.set_target(target_urdf)

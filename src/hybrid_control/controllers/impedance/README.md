@@ -92,15 +92,16 @@ This is the QP above, without options 2 and 3. The Panda's position servos are r
 
 ```python
 import mujoco
+from hybrid_control.utils.control_utils import ImpedanceQPConfig, TaskSpaceTarget
 from hybrid_control.controllers.impedance.impedance_control import (
-    ImpedanceController, ImpedanceQPConfig, TaskSpaceTarget,
+    ImpedanceController,
 )
-from hybrid_control.sim_interfaces.mujoco.adapter import MujocoTorqueRobotModel
+from hybrid_control.sim_interfaces.mujoco.adapter import MujocoRobotModel
 from hybrid_control.sim_interfaces.mujoco.modifier import MujocoModifier
 
 spec = MujocoModifier.build_torque_spec(xml_file, [f"actuator{i}" for i in range(1, 8)])
 model = spec.compile()
-robot = MujocoTorqueRobotModel(model, mujoco.MjData(model), joint_actuator_pairs)
+robot = MujocoRobotModel(model, mujoco.MjData(model), joint_actuator_pairs, control_mode="torque")
 
 controller = ImpedanceController(robot, ImpedanceQPConfig(
     acceleration_lower=-ddq_max, acceleration_upper=ddq_max,

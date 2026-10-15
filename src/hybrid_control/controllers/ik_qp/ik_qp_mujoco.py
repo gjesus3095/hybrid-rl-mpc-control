@@ -2,8 +2,8 @@ import numpy as np
 import scipy.sparse as sp
 import osqp
 from hybrid_control.controllers.base import Controller
-from hybrid_control.controllers.ik_qp.config import IKQPConfig, PoseTarget
-from hybrid_control.robots.model import RobotModel
+from hybrid_control.utils.control_utils import IKQPConfig, TaskSpaceTarget
+from hybrid_control.robots.model import ControlMode, RobotModel
 from hybrid_control.robots.state import JointPositionCommand
 from hybrid_control.utils.math_helpers import MathHelpers
 from hybrid_control.utils.osqp_utils import suppress_c_stdout
@@ -12,11 +12,15 @@ from hybrid_control.utils.osqp_utils import suppress_c_stdout
 # DIFF INVERSE KINEMATICS CONTROLLER (QP)
 # ==================================================================================================
 
-class InverseKinematicsController(Controller[PoseTarget, JointPositionCommand], MathHelpers):
+class InverseKinematicsController(Controller[TaskSpaceTarget, JointPositionCommand], MathHelpers):
     """Differential IK/QP that computes position references without applying them."""
 
+    @property
+    def control_mode(self) -> ControlMode:
+        return "position"
+
     def __init__(self, robot: RobotModel, config: IKQPConfig):
-        self.robot = robot
+        super().__init__(robot)
         self.config = config
         self.n_dofs = len(robot.joint_names)
         if config.velocity_lower.shape != (self.n_dofs,):
@@ -104,7 +108,7 @@ class InverseKinematicsController(Controller[PoseTarget, JointPositionCommand], 
     # ----------------------------------------------------------------------------------------------
     # 3. CORE CONTROL LOGIC
     # ----------------------------------------------------------------------------------------------
-    def compute(self, target: PoseTarget, dt: float) -> JointPositionCommand:
+    def compute(self, target: TaskSpaceTarget, dt: float) -> JointPositionCommand:
         """Return q + dq*dt in model joint order; dt is in seconds.
 
         Reads use the current simulation snapshot. The caller must keep physics
@@ -112,8 +116,8 @@ class InverseKinematicsController(Controller[PoseTarget, JointPositionCommand], 
         """
         if not np.isfinite(dt) or dt <= 0:
             raise ValueError("dt must be finite and positive")
-        if not isinstance(target, PoseTarget):
-            raise TypeError("target must be a PoseTarget")
+        if not isinstance(target, TaskSpaceTarget):
+            raise TypeError("target must be a TaskSpaceTarget")
         config = self.config
         state = self.robot.get_state()
         q_current = state.positions
