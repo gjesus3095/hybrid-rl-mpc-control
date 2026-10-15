@@ -2,7 +2,9 @@
 
 Scripts for training, evaluating, and visualizing the moving-mass base policy. The policy drives the Ridgeback base; a 3-DoF mechanism (roll, pitch, lift) follows a randomized joint spline each episode and shifts the whole-robot CoM. There is no arm controller. The mast swings on roll/pitch joints (−90° to +90° each),
 and all rigid bodies have collision shapes for physical falls. This is the
-`moving_mass_v2` model; older planar-model checkpoints require retraining.
+`moving_mass_v3` model; older v1/v2 checkpoints require retraining.
+
+Carriage (0.25–1 kg), roll hub (0.125–0.5 kg), mast (0.125–0.5 kg), and terminal (0.8–3 kg) masses are sampled independently each episode. Configure these ranges under `domain_randomization`.
 
 Require `ISAACLAB_PYTHON` set and the package installed (see [Isaac Lab setup](../../../README.md#isaac-lab-30--isaac-sim-61-python-312)). Run from the project root:
 
@@ -83,3 +85,12 @@ PYTHONPATH=~/workspace/hybrid-rl-mpc-control/src \
 ```
 
 Exits with a non-zero code on any assertion failure.
+
+Shared platform defaults (footprint, base mass, CoM height and their randomization
+ranges/bias) follow `src/hybrid_control/sim_interfaces/isaac/ridgeback/params.py`.
+Common reward defaults follow `src/hybrid_control/rl/policy_with_controller/rewards.py`.
+Upper-body mass ranges and joint settings remain in `moving_mass/params.py`.
+Explicit YAML overrides and saved run configurations take precedence over defaults.
+
+Terminal mass defaults and sampling bias match Ridgeback payload settings: `payload`
+and `hard_bias` in `ridgeback/params.py` (biased toward heavier payloads).

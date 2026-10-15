@@ -12,27 +12,29 @@ trajectory-centre shaping (the base position has no single target relative to th
 from dataclasses import dataclass
 import torch
 
+from hybrid_control.rl.policy_with_controller.rewards import RewardCfg as RidgebackRewardCfg
+
 
 @dataclass(frozen=True)
 class RewardCfg:
     # --- stability ---
     # exp(-(max(rho, deadzone) / sigma)^2), rho = COM offset as a fraction of the half footprint; the weight is
     # 2 exp((deadzone / sigma)^2), so the plateau inside the deadzone is 2.0 per step (update it with sigma/deadzone)
-    w_com: float = 8.4414
-    com_sigma: float = 0.5
-    com_deadzone: float = 0.6  # rho below which the com reward is constant (its value at rho = deadzone)
-    w_tilt: float = -1.0  # (roll^2 + pitch^2) / tilt_scale^2; penalizes platform lean before the tip threshold
-    tilt_scale: float = 0.25  # [rad]
-    termination_penalty: float = -10.0  # on the step the platform tips (not on time-outs)
+    w_com: float = RidgebackRewardCfg.w_com
+    com_sigma: float = RidgebackRewardCfg.com_sigma
+    com_deadzone: float = RidgebackRewardCfg.com_deadzone  # rho below which the com reward is constant (its value at rho = deadzone)
+    w_tilt: float = RidgebackRewardCfg.w_tilt  # (roll^2 + pitch^2) / tilt_scale^2; penalizes platform lean before the tip threshold
+    tilt_scale: float = RidgebackRewardCfg.tilt_scale  # [rad]
+    termination_penalty: float = RidgebackRewardCfg.termination_penalty  # on the step the platform tips (not on time-outs)
     # --- penalties on base motion: slow, smooth corrections ---
-    w_speed: float = -1.0  # (|v| / lin_speed_scale)^2, measured base speed
-    lin_speed_scale: float = 0.5  # [m/s]
-    w_spin: float = -1.0  # (yaw rate / yaw_rate_scale)^2, measured
-    yaw_rate_scale: float = 0.6  # [rad/s]
-    w_yaw: float = 0.0  # (yaw / yaw_scale)^2; disabled: spinning is already penalized by w_spin
-    yaw_scale: float = 0.6  # [rad]
-    w_action_rate: float = -0.3  # |a_t - a_{t-1}|^2, jerky commands
-    w_action: float = 0.0  # |a|^2; disabled: overlaps with w_speed
+    w_speed: float = RidgebackRewardCfg.w_speed  # (|v| / lin_speed_scale)^2, measured base speed
+    lin_speed_scale: float = RidgebackRewardCfg.lin_speed_scale  # [m/s]
+    w_spin: float = RidgebackRewardCfg.w_spin  # (yaw rate / yaw_rate_scale)^2, measured
+    yaw_rate_scale: float = RidgebackRewardCfg.yaw_rate_scale  # [rad/s]
+    w_yaw: float = RidgebackRewardCfg.w_yaw  # (yaw / yaw_scale)^2; disabled: spinning is already penalized by w_spin
+    yaw_scale: float = RidgebackRewardCfg.yaw_scale  # [rad]
+    w_action_rate: float = RidgebackRewardCfg.w_action_rate  # |a_t - a_{t-1}|^2, jerky commands
+    w_action: float = RidgebackRewardCfg.w_action  # |a|^2; disabled: overlaps with w_speed
 
 
 def compute_rewards(cfg, com_rho, roll, pitch, base_vel, yaw_rate, yaw, action, last_action, terminated):

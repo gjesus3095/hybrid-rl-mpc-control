@@ -39,7 +39,11 @@ def main():
                 curves_before = env.traj.control.clone()
                 joint_before = robot.data.joint_pos.torch.clone()
                 root_before = robot.data.root_pose_w.torch.clone()
+                masses_before = robot.data.body_mass.torch.clone()
+                inertias_before = robot.data.body_inertia.torch.clone()
                 env._reset_idx(ids)
+                assert torch.equal(masses_before[keep], robot.data.body_mass.torch[keep])
+                assert torch.equal(inertias_before[keep], robot.data.body_inertia.torch[keep])
                 assert [p.footprint for p in base.params] == original_footprints
                 assert torch.equal(curves_before[keep], env.traj.control[keep])
                 assert torch.equal(joint_before[keep], robot.data.joint_pos.torch[keep])
@@ -53,13 +57,28 @@ def main():
                                           (p.base_mass, platform.base_mass), (p.base_com_z, platform.base_com_z),
                                           (p.terminal_mass, cfg.domain_randomization.terminal_mass)):
                         assert bounds[0] <= value <= bounds[1]
-                    expected_mass = p.base_mass + cfg.mechanism.carriage_mass + (cfg.mechanism.gimbal_mass + cfg.mechanism.mast_mass) + p.terminal_mass
+                    for name, body_id in base.mass_model.upper_ids.items():
+                        value = getattr(p, name)
+                        lo, hi = getattr(cfg.domain_randomization, name)
+                        assert lo <= value <= hi
+                        assert abs(float(robot.data.body_mass.torch[i, body_id])-value) < 1e-5
+                        size = {'carriage_mass': (.06, .06, .08), 'gimbal_mass': (.06, .06, .06),
+                                'mast_mass': (.035, .035, cfg.mechanism.mast_length)}[name]
+                        x, y, z = size
+                        expected_inertia = torch.diag(torch.tensor(
+                            [value*(y*y+z*z)/12, value*(x*x+z*z)/12, value*(x*x+y*y)/12],
+                            device=env.device)).flatten()
+                        assert torch.allclose(robot.data.body_inertia.torch[i, body_id],
+                                              expected_inertia, atol=1e-7, rtol=1e-4)
+                    assert torch.allclose(env.param_vec[i, 5:8],
+                        env.param_vec.new_tensor([p.carriage_mass, p.gimbal_mass, p.mast_mass]))
+                    expected_mass = p.base_mass + p.carriage_mass + p.gimbal_mass + p.mast_mass + p.terminal_mass
                     assert abs(float(base.mass_total[i])-expected_mass) < 1e-4
                     assert abs(float(robot.data.body_mass.torch[i, base.base_id])-p.base_mass) < 1e-4
                     assert abs(float(robot.data.body_mass.torch[i, base.mass_model.terminal_id])-p.terminal_mass) < 1e-4
                     assert abs(float(env.param_vec[i, -1])-expected_mass) < 1e-4
                     if i in ids.tolist():
-                        observations.append([*p.footprint, p.base_mass, p.base_com_z, p.terminal_mass])
+                        observations.append([*p.footprint, p.base_mass, p.base_com_z, p.terminal_mass, p.carriage_mass, p.gimbal_mass, p.mast_mass])
                 expected_com = analytical_com(robot.data.joint_pos.torch[:, base.joint_ids],
                     robot.data.body_pos_w.torch[:, base.base_id], robot.data.body_quat_w.torch[:, base.base_id],
                     base.params, cfg.mechanism)
@@ -73,13 +92,13 @@ def main():
                     obs, reward, _, _ = env.step(torch.zeros(env.num_envs, 3, device=env.device))
                     assert torch.isfinite(obs['actor']).all() and torch.isfinite(reward).all()
             dr = cfg.domain_randomization
-            has_dynamic_range = any(lo < hi for lo, hi in (dr.platform.base_mass, dr.platform.base_com_z, dr.terminal_mass))
+            has_dynamic_range = any(lo < hi for lo, hi in (dr.platform.base_mass, dr.platform.base_com_z, dr.terminal_mass, dr.carriage_mass, dr.gimbal_mass, dr.mast_mass))
             if has_dynamic_range:
                 assert changed_mass, 'nonconstant dynamics did not change across resets'
             if cfg.trajectory.difficulty > 0:
                 assert changed_spline, 'nonconstant splines did not change across resets'
             data = torch.tensor(observations)
-            for i, name in enumerate(('length_m', 'width_m', 'base_mass_kg', 'base_com_z_m', 'terminal_mass_kg')):
+            for i, name in enumerate(('length_m', 'width_m', 'base_mass_kg', 'base_com_z_m', 'terminal_mass_kg', 'carriage_mass_kg', 'gimbal_mass_kg', 'mast_mass_kg')):
                 print(f'[SAMPLES] {name}: min={data[:, i].min():.4f}, mean={data[:, i].mean():.4f}, max={data[:, i].max():.4f}')
             print(f'[PASS] {args.resets} partial resets: fixed footprints, simulator masses/CoM, parameter observations, '
                   'bounded fresh splines, and untouched neighboring slots')

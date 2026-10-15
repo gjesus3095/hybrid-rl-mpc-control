@@ -21,8 +21,8 @@ def _construct(cls, values):
 
 def load_env_cfg(values):
     values = dict(values)
-    if values.get('environment_kind') != 'moving_mass_v2':
-        raise ValueError('checkpoint/config is not a moving_mass_v2 environment; older planar moving-mass and Panda checkpoints are incompatible')
+    if values.get('environment_kind') != 'moving_mass_v3':
+        raise ValueError('checkpoint/config is not a moving_mass_v3 environment; older planar/radial moving-mass and Panda checkpoints are incompatible')
     for key, cls in [('mechanism', MechanismCfg), ('trajectory', TrajectoryCfg),
                      ('observation', ObservationCfg), ('reward', RewardCfg)]:
         if key in values:

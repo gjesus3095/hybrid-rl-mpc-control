@@ -104,10 +104,14 @@ The joint order is `(roll, pitch, lift)` in radians, radians, metres;
 base actions are yaw-frame `(vx, vy, wz)` in m/s, m/s, rad/s after scaling.
 Defaults are 120 Hz physics, 30 Hz policy, and 15-second episodes. The platform
 uses the controller case's base mass/footprint distributions. Its upper mechanism
-has a 0.5 m upright mast (0.25 kg), a 0.25 kg roll hub, a 0.5 kg carriage,
+has a 0.5 m upright mast, a roll hub, a carriage,
 0–0.4 m lift travel, and a
-terminal mass sampled uniformly from 1–5 kg. Geometry is fixed at spawn. Episode
-resets resample masses and trajectories. All bodies have rigid-body mass/inertia and collision shapes, including ground
+terminal mass sampled from the Ridgeback payload range (0.8–3 kg), biased toward heavier masses. Geometry is fixed at spawn. Episode
+resets independently resample carriage (0.25–1 kg), roll hub (0.125–0.5 kg),
+mast (0.125–0.5 kg), terminal and base masses, plus trajectories. Upper mass
+ranges for carriage, hub and mast are uniform and configurable under `domain_randomization`; equal bounds
+disable randomization for a body. Inertias scale with mass at fixed geometry.
+This upper-body randomization applies only to `no_controller`. All bodies have rigid-body mass/inertia and collision shapes, including ground
 contacts for the mast and terminal mass during a fall. Nonadjacent self-collisions
 are enabled except between the carriage and the mast through its bearing; connected
 joint bodies and separate environment slots are filtered. This is an abstract disturbance mechanism, not a manufactured robot model.
@@ -122,7 +126,7 @@ failure times. Physics reproducibility remains backend/device dependent.
 
 The actor sees current total CoM, normalized footprint offset, base velocity,
 angular velocity, tilt, joint positions/velocities, previous action, and physical
-parameters (28 inputs by default). The critic also sees mechanism CoM (31 inputs).
+parameters (31 inputs by default). The critic also sees mechanism CoM (34 inputs).
 Neither sees future spline targets. Rewards encourage stability and penalize
 base motion and abrupt actions; there are no end-effector or trajectory tracking
 rewards. Episodes fail at 0.5 rad roll/pitch, including a tip on the timeout step.
@@ -140,7 +144,7 @@ checkpoint-free baseline. Omitted fields retain defaults; unknown fields fail.
 For example:
 
 ```yaml
-environment_kind: moving_mass_v2
+environment_kind: moving_mass_v3
 episode_length_s: 15.0
 mechanism:
   mast_length: 0.5
@@ -154,7 +158,10 @@ trajectory:
   max_velocity: [2.0, 2.0, 0.4]
   max_acceleration: [6.0, 6.0, 1.2]
 domain_randomization:
-  terminal_mass: [1.0, 5.0]
+  terminal_mass: [0.8, 3.0]
+  carriage_mass: [0.25, 1.0]
+  gimbal_mass: [0.125, 0.5]
+  mast_mass: [0.125, 0.5]
   platform:
     length: [0.19, 0.52]
     width: [0.19, 0.52]
@@ -234,7 +241,7 @@ neighboring slots during partial resets. It prints sampled min/mean/max values;
 these are diagnostics, not a statistical distribution-fit test. `--config` supports
 checking custom ranges, including deliberately constant parameters.
 
-The roll/pitch model is `moving_mass_v2`; older planar-mechanism checkpoints and
+The roll/pitch model is `moving_mass_v3`; older v1/v2 moving-mass checkpoints and
 YAML configurations are rejected because their joint meanings and dynamics differ.
 Start a new training run. Both angular joints span −90° to +90°. The lift stays
 vertical relative to the base; roll about X and then pitch about the rotated Y
@@ -246,3 +253,6 @@ reversals or endpoints. New defaults increase speed/acceleration limits and halv
 the knot interval. Infeasible custom speed floors raise an error rather than
 silently creating a slower trajectory. Individual probes accept `--joint roll`,
 `--joint pitch`, or `--joint lift`.
+
+Version 3 includes carriage, hub and mast masses in observations. Fixed upper masses
+now belong to `MovingMassParams`, rather than `MechanismCfg`. Retrain older policies.

@@ -12,9 +12,9 @@ import torch
 @dataclass(frozen=True)
 class TrajectoryCfg:
     knot_interval: float = 1.0
-    max_velocity: tuple[float, float, float] = (2.0, 2.0, 0.4)
-    min_peak_velocity: tuple[float, float, float] = (0.9, 0.9, 0.18)  # per-episode floor, not at reversals
-    max_acceleration: tuple[float, float, float] = (6.0, 6.0, 1.2)
+    max_velocity: tuple[float, float, float] = (4.0, 4.0, 0.5)
+    min_peak_velocity: tuple[float, float, float] = (1.0, 1.0, 0.2)  # per-episode floor, not at reversals
+    max_acceleration: tuple[float, float, float] = (20.0, 20.0, 4)
     difficulty: float = 1.0
 
     def __post_init__(self):

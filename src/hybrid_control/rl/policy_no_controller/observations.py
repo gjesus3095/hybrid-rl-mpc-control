@@ -31,7 +31,7 @@ class Snapshot:
     joint_pos: torch.Tensor  # (N, 3), rad/rad/m
     joint_vel: torch.Tensor  # (N, 3), rad/s, rad/s, m/s
     half_size: torch.Tensor  # (N, 2) half footprint length, width
-    params: torch.Tensor  # (N, P) [length, width, base_mass, base_com_z, terminal mass, total_mass]
+    params: torch.Tensor  # (N, P) [length, width, base_mass, base_com_z, terminal_mass, carriage_mass, gimbal_mass, mast_mass, total_mass]
     last_action: torch.Tensor  # (N, 3)
 
 

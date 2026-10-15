@@ -35,3 +35,17 @@ def test_probe_endpoints_and_analytic_velocity():
         q, v = protocol_targets(time, initial, target, 1, 4, 3, True)
         assert torch.allclose((right-left)/(2*eps), v, atol=2e-4)
         assert torch.equal(q[:, 0], initial[:, 0])
+
+
+def test_com_uses_each_episodes_upper_masses():
+    cfg = MechanismCfg()
+    params = [MovingMassParams(carriage_mass=1, gimbal_mass=.5, mast_mass=.5),
+              MovingMassParams(carriage_mass=.25, gimbal_mass=.125, mast_mass=.125)]
+    q = torch.tensor([[0, math.pi/2, .2]] * 2)
+    actual = analytical_com(q, torch.zeros(2, 3), torch.tensor([[0., 0, 0, 1]] * 2), params, cfg)
+    for i, p in enumerate(params):
+        upper = p.carriage_mass + p.gimbal_mass + p.mast_mass + p.terminal_mass
+        total = p.base_mass + upper
+        expected = torch.tensor([(p.mast_mass*.25+p.terminal_mass*.54)/total,
+                                 0, (p.base_mass*.1+upper*.56)/total])
+        assert torch.allclose(actual[i], expected, atol=1e-6)

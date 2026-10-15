@@ -26,11 +26,11 @@ from .trajectories import JointSplines, TrajectoryCfg
 
 @dataclass(frozen=True)
 class StabilizationEnvCfg:
-    environment_kind: str = 'moving_mass_v2'  # version tag; checked on load to catch config/checkpoint mismatches
+    environment_kind: str = 'moving_mass_v3'  # version tag; checked on load to catch config/checkpoint mismatches
     physics_dt: float = 1 / 120  # 120 Hz physics
     decimation: int = 4  # physics steps per policy step (120 Hz physics -> 30 Hz policy)
     episode_length_s: float = 15.0
-    max_base_speed: tuple[float, float, float] = (0.5, 0.5, 0.6)  # |vx|, |vy| [m/s], |wz| [rad/s] at action = +-1
+    max_base_speed: tuple[float, float, float] = (1.0, 1.0, 0.6)  # |vx|, |vy| [m/s], |wz| [rad/s] at action = +-1
     friction: float = 0.05  # virtual base actuator: ground friction coefficient
     base_time_constant: float = 0.15  # virtual base actuator: first-order velocity-tracking time constant [s]
     max_base_force: float = 1000.0  # virtual base actuator: maximum planar force and yaw torque [N / N·m]
@@ -41,7 +41,7 @@ class StabilizationEnvCfg:
     reward: RewardCfg = field(default_factory=RewardCfg)
 
     def __post_init__(self):
-        if self.environment_kind != 'moving_mass_v2':
+        if self.environment_kind != 'moving_mass_v3':
             raise ValueError('incompatible environment kind')
         if self.physics_dt <= 0 or self.decimation < 1 or int(self.decimation) != self.decimation:
             raise ValueError('physics_dt and integer decimation must be positive')
@@ -70,7 +70,7 @@ class BaseStabilizationEnv(VecEnv):
                                  cfg.mechanism, cfg.trajectory, seed)
         self.max_vel = torch.tensor(cfg.max_base_speed, device=self.device)
         self.last_action = torch.zeros(self.num_envs, 3, device=self.device)
-        self.param_vec = torch.zeros(self.num_envs, 6, device=self.device)  # [length, width, base_mass, base_com_z, terminal_mass, total_mass]
+        self.param_vec = torch.zeros(self.num_envs, 9, device=self.device)  # [length, width, base_mass, base_com_z, terminal_mass, carriage_mass, gimbal_mass, mast_mass, total_mass]
         self.auto_reset = True  # False keeps finished envs in place (e.g. to record a video)
         self._ep_sums = {}
         self.extras = {}
@@ -96,7 +96,7 @@ class BaseStabilizationEnv(VecEnv):
         for i in ids.tolist():
             p = self.env.params[i]
             self.param_vec[i] = torch.tensor([*p.footprint, p.base_mass, p.base_com_z,
-                                              p.terminal_mass, float(self.env.mass_total[i])], device=self.device)
+                                              p.terminal_mass, p.carriage_mass, p.gimbal_mass, p.mast_mass, float(self.env.mass_total[i])], device=self.device)
         for value in self._ep_sums.values():
             value[ids] = 0
 
@@ -113,13 +113,14 @@ class BaseStabilizationEnv(VecEnv):
         self.episode_length_buf += 1
         timeout = self.episode_length_buf >= self.max_episode_length
         failed = env.tipped.clone()
+        terminated = failed & ~timeout  # a time-out on the same step is not counted as a failure
         dones = failed | timeout
         # Reward inputs.
         rho = env.com_offset / env.half_length  # COM offset as a fraction of the half footprint
         lin = to_base_frame(env.yaw, env.robot.data.body_com_lin_vel_w.torch[:, env.base_id])[:, :2]
         ang = env.robot.data.body_com_ang_vel_w.torch[:, env.base_id, 2]
         reward, terms = compute_rewards(cfg.reward, rho, env.roll, env.pitch, lin, ang, env.yaw,
-                                        action, self.last_action, failed)
+                                        action, self.last_action, terminated)
         for name, value in terms.items():
             self._ep_sums.setdefault(name, torch.zeros_like(value)).add_(value)
         self.last_action = action.clone()

@@ -29,7 +29,8 @@ from hybrid_control.sim_interfaces.isaac.moving_mass.params import MovingMassRan
 def main():
     # Fixed, easy dynamics isolate implementation correctness from learning difficulty.
     dr = MovingMassRandomization(platform=PlatformRandomization(length=(.4, .4), width=(.4, .4),
-        base_mass=(30, 30), base_com_z=(.1, .1)), terminal_mass=(3, 3))
+        base_mass=(30, 30), base_com_z=(.1, .1)), terminal_mass=(3, 3),
+        carriage_mass=(.5, .5), gimbal_mass=(.25, .25), mast_mass=(.25, .25))
     cfg = replace(StabilizationEnvCfg(), domain_randomization=dr)
     sim_cfg = sim_utils.SimulationCfg(dt=cfg.physics_dt, device=args.device)
     with launch_simulation(sim_cfg, args):
@@ -47,13 +48,13 @@ def main():
                 joint = UsdPhysics.RevoluteJoint.Get(stage, f'/World/envs/env_0/Robot/{name}')
                 assert joint.GetAxisAttr().Get() == axis
                 assert joint.GetLowerLimitAttr().Get() == -90 and joint.GetUpperLimitAttr().Get() == 90
-            expected_mass = 30 + cfg.mechanism.carriage_mass + (cfg.mechanism.gimbal_mass + cfg.mechanism.mast_mass) + 3
+            expected_mass = 34.0
             assert torch.allclose(base.mass_total, torch.full_like(base.mass_total, expected_mass), atol=1e-5)
             # Upright mast: all horizontal CoM contributions vanish.
             m = cfg.mechanism
             pivot_z = m.platform_height + .08 + m.initial[2]
-            upper_moment = ((m.carriage_mass + m.gimbal_mass)*pivot_z
-                            + m.mast_mass*(pivot_z + m.mast_length/2)
+            upper_moment = ((.5 + .25)*pivot_z
+                            + .25*(pivot_z + m.mast_length/2)
                             + 3*(pivot_z + m.mast_length + .04))
             expected = torch.tensor([0, 0, (30*.1 + upper_moment)/expected_mass + .01], device=env.device)
             error = (base.com_total-base.origins-expected).abs().max()
