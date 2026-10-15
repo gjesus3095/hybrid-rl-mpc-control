@@ -4,9 +4,9 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from hybrid_control.rl.observations import ObservationCfg, Snapshot, com_offset_norm, observe, to_base_frame
-from hybrid_control.rl.rewards import RewardCfg, compute_rewards
-from hybrid_control.rl.trajectories import ReferenceTrajectories, TrajectoryCfg
+from hybrid_control.rl.policy_with_controller.observations import ObservationCfg, Snapshot, com_offset_norm, observe, to_base_frame
+from hybrid_control.rl.policy_with_controller.rewards import RewardCfg, compute_rewards
+from hybrid_control.rl.policy_with_controller.trajectories import ReferenceTrajectories, TrajectoryCfg
 
 
 def make_trajs(n=16, **cfg):
@@ -191,14 +191,14 @@ def test_tracking_reward_falls_with_end_effector_error():
 
 
 def test_reward_term_info_matches_compute_rewards():
-    from hybrid_control.rl.rewards import RewardCfg, reward_term_info
+    from hybrid_control.rl.policy_with_controller.rewards import RewardCfg, reward_term_info
 
     _, terms = reward(torch.zeros(3))
     assert [name for name, _, _ in reward_term_info(RewardCfg())] == list(terms)
 
 
 def test_observation_terms_concatenate_to_observe():
-    from hybrid_control.rl.observations import observation_terms
+    from hybrid_control.rl.policy_with_controller.observations import observation_terms
 
     snap = make_snapshot()
     actor, critic = observe(snap, ObservationCfg())

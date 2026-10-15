@@ -28,7 +28,7 @@ class RewardCfg:
     tilt_scale: float = 0.25  # [rad]
     termination_penalty: float = -10.0  # on the step an env tips or its COM leaves the footprint (not on time-outs)
     # --- stay near / go toward the trajectory (planar distance footprint centre -> trajectory centre) ---
-    w_centre: float = 0.0  # disabled, was 0.5; exp(-(max(d - deadzone, 0) / sigma)^2)
+    w_centre: float = 0.0  # disabled, was 0.5; exp(-(max(d - deadzone, 0) / sigma)^2)   # No used without controller
     centre_sigma: float = 0.5  # [m]
     centre_deadzone: float = 0.35  # [m] about the horizontal distance at which the arm is comfortably bent
     w_progress: float = 0.0  # disabled, was 1.0; clamp(rate of approach, -1, 1) [m/s] while d > deadzone; potential-based
@@ -42,7 +42,7 @@ class RewardCfg:
     w_action_rate: float = -0.3  # |a_t - a_{t-1}|^2, jerky commands
     w_action: float = 0.0  # |a|^2; disabled (was -0.05): overlaps with w_speed
     # --- end-effector tracking (the QP does the tracking, but the base can disturb it or leave the target near the
-    # edge of the workspace) ---
+    # edge of the workspace) ---  # No used without controller
     w_track: float = 0.5  # exp(-(e / sigma)^2), e = end-effector distance to the reference point
     track_sigma: float = 0.08  # [m]
 

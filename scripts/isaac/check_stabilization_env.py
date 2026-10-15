@@ -31,7 +31,7 @@ import torch
 import isaaclab.sim as sim_utils
 from isaaclab.sim import SimulationContext
 
-from hybrid_control.rl.env import BaseStabilizationEnv, IKCfg, StabilizationEnvCfg
+from hybrid_control.rl.policy_with_controller.env import BaseStabilizationEnv, IKCfg, StabilizationEnvCfg
 from hybrid_control.sim_interfaces.isaac.ridgeback.env import RidgebackDREnv
 from hybrid_control.sim_interfaces.isaac.ridgeback.params import DomainRandomization
 

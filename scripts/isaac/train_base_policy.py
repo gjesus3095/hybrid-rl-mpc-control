@@ -45,8 +45,8 @@ from isaaclab.utils.io import dump_yaml
 from rsl_rl.runners import OnPolicyRunner
 
 from hybrid_control.rl.config import make_runner_cfg, saved_observation_cfg
-from hybrid_control.rl.env import BaseStabilizationEnv, StabilizationEnvCfg
-from hybrid_control.rl.trajectories import TrajectoryCfg
+from hybrid_control.rl.policy_with_controller.env import BaseStabilizationEnv, StabilizationEnvCfg
+from hybrid_control.rl.policy_with_controller.trajectories import TrajectoryCfg
 from hybrid_control.sim_interfaces.isaac.ridgeback.env import RidgebackDREnv
 from hybrid_control.sim_interfaces.isaac.ridgeback.params import DomainRandomization
 

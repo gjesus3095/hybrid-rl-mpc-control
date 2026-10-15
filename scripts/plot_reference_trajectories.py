@@ -20,7 +20,7 @@ import numpy as np
 import torch
 from matplotlib.patches import Circle, Rectangle
 
-from hybrid_control.rl.trajectories import ReferenceTrajectories, TrajectoryCfg
+from hybrid_control.rl.policy_with_controller.trajectories import ReferenceTrajectories, TrajectoryCfg
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--n", type=int, default=40)
