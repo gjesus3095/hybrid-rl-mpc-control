@@ -1,9 +1,14 @@
-"""Run the per-env IK/QP solves in parallel worker processes (NumPy only, no Isaac/torch imports).
+"""Run the per-env arm QPs (Pink IK or impedance) in parallel worker processes (NumPy only, no Isaac/torch imports).
 
-The unchanged ``InverseKinematicsController`` is used inside each worker, so results equal the serial loop. Workers
-are plain subprocesses (``python -m hybrid_control.rl.qp_worker``) rather than ``multiprocessing`` children: they
-never fork a process that holds CUDA/Kit state and never re-import the training script. Inputs and outputs travel
-through one shared-memory block; a one-line message over the worker's pipes signals each solve.
+``QPPool`` holds one set of per-env input/output arrays (``QPPool.v``) whose fields depend on the controller
+(``FIELDS``). The caller fills the inputs, calls ``solve()`` and reads ``command`` (joint position targets for
+``ik_qp``, joint torques for ``impedance``). Each env's solve is done by ``qp_worker.make_solver``, so the serial
+path (``workers=0``) and the parallel path give the same results.
+
+Workers are plain subprocesses (``python -m hybrid_control.rl.qp_worker``) rather than ``multiprocessing`` children:
+they never fork a process that holds CUDA/Kit state and never re-import the training script, so the pool can be
+created after the simulator has started. Inputs and outputs travel through one shared-memory block; a one-line
+message over the worker's pipes signals each solve.
 """
 
 from __future__ import annotations
@@ -17,58 +22,62 @@ from pathlib import Path
 
 import numpy as np
 
-from hybrid_control.controllers.ik_qp.controller import IKQPConfig
-
-N_QUAT = 4
+CONTROLLERS = ("ik_qp", "impedance")
 
 
-def layout(num_envs: int, n_dof: int) -> dict[str, tuple[int, tuple[int, ...]]]:
-    """Field name -> (float64 offset, shape) inside the shared block."""
-    fields = {
-        "q": (num_envs, n_dof), "ee_pos": (num_envs, 3), "ee_quat": (num_envs, N_QUAT),
-        "jac": (num_envs, 6, n_dof), "target": (num_envs, 3), "ori": (num_envs, N_QUAT), "active": (num_envs,),
-        "q_cmd": (num_envs, n_dof), "failed": (num_envs,),
-    }
+def fields(controller: str, n_dof: int) -> dict[str, tuple[int, ...]]:
+    """Per-env field name -> shape (without the env axis). Poses are (position, xyzw quaternion), world frame."""
+    common = {"q": (n_dof,), "limits": (n_dof, 2), "target": (7,), "active": (), "reset": ()}
+    if controller == "ik_qp":
+        specific = {"root_pose": (7,)}
+    elif controller == "impedance":
+        specific = {
+            "dq": (n_dof,), "ee_pose": (7,), "jac": (6, n_dof), "djac": (6, n_dof), "mass": (n_dof, n_dof),
+            "h": (n_dof,), "target_vel": (6,), "target_acc": (6,),
+        }
+    else:
+        raise ValueError(f"controller must be one of {CONTROLLERS}, got {controller!r}")
+    return {**common, **specific, "command": (n_dof,), "failed": ()}
+
+
+def layout(controller: str, num_envs: int, n_dof: int) -> tuple[dict[str, tuple[int, tuple[int, ...]]], int]:
+    """Field name -> (float64 offset, shape) inside the shared block, and the block size in float64."""
     out, offset = {}, 0
-    for name, shape in fields.items():
+    for name, shape in fields(controller, n_dof).items():
+        shape = (num_envs, *shape)
         out[name] = (offset, shape)
         offset += int(np.prod(shape))
-    out["_size"] = (offset, ())
-    return out
+    return out, offset
 
 
-def views(buf, num_envs: int, n_dof: int) -> dict[str, np.ndarray]:
-    spec = layout(num_envs, n_dof)
-    total = spec.pop("_size")[0]
+def views(buf, controller: str, num_envs: int, n_dof: int) -> dict[str, np.ndarray]:
+    spec, total = layout(controller, num_envs, n_dof)
     flat = np.ndarray((total,), dtype=np.float64, buffer=buf)
     return {k: flat[o : o + int(np.prod(s))].reshape(s) for k, (o, s) in spec.items()}
 
 
 class QPPool:
-    def __init__(
-        self, num_envs: int, joint_names: tuple[str, ...], limits: tuple[np.ndarray, np.ndarray], config: IKQPConfig,
-        dt: float, ee_frame: str, workers: int,
-    ):
-        self.num_envs, self.n_dof = num_envs, len(joint_names)
-        spec = layout(num_envs, self.n_dof)
-        self._shm = shared_memory.SharedMemory(create=True, size=8 * spec["_size"][0])
-        self.v = views(self._shm.buf, num_envs, self.n_dof)
+    def __init__(self, controller: str, num_envs: int, n_dof: int, solver_cfg: dict, workers: int):
+        """``solver_cfg`` is the JSON-serializable controller setup read by ``qp_worker.make_solver``."""
+        from .qp_worker import make_solver
+
+        self.controller, self.num_envs, self.n_dof = controller, num_envs, n_dof
+        _, size = layout(controller, num_envs, n_dof)
+        self._shm, self._procs, self._local = None, [], None
+        if workers <= 0:  # solve in this process
+            self.v = views(bytearray(8 * size), controller, num_envs, n_dof)
+            self._local = make_solver(controller, solver_cfg, 0, num_envs)
+            return
+        self._shm = shared_memory.SharedMemory(create=True, size=8 * size)
+        self.v = views(self._shm.buf, controller, num_envs, n_dof)
         for arr in self.v.values():
             arr[...] = 0.0
         workers = max(1, min(workers, num_envs))
-        cfg = {
-            "shm": self._shm.name, "num_envs": num_envs, "joint_names": list(joint_names), "frame": ee_frame, "dt": dt,
-            "limits": [np.asarray(limits[0]).tolist(), np.asarray(limits[1]).tolist()],
-            "ik": {
-                "velocity_lower": config.velocity_lower.tolist(), "velocity_upper": config.velocity_upper.tolist(),
-                "kp_pos": config.kp_pos, "kp_ori": config.kp_ori, "position_weight": config.position_weight,
-                "orientation_weight": config.orientation_weight, "damping": config.damping,
-            },
-        }
+        cfg = {"shm": self._shm.name, "controller": controller, "num_envs": num_envs, "n_dof": n_dof,
+               "solver": solver_cfg}
         env = dict(os.environ, OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", MKL_NUM_THREADS="1")
         src = str(Path(__file__).resolve().parents[2])  # make `hybrid_control` importable in the workers
         env["PYTHONPATH"] = os.pathsep.join([src] + [p for p in env.get("PYTHONPATH", "").split(os.pathsep) if p])
-        self._procs = []
         for chunk in np.array_split(np.arange(num_envs), workers):
             wcfg = dict(cfg, start=int(chunk[0]), stop=int(chunk[-1]) + 1)
             self._procs.append(subprocess.Popen(
@@ -84,17 +93,23 @@ class QPPool:
             raise RuntimeError(f"QP worker exited unexpectedly (code {proc.poll()})")
         return line
 
-    def solve(self, q, ee_pos, ee_quat, jacobian, target, ori, active) -> tuple[np.ndarray, int]:
-        """Solve every active env. Returns ``(q_cmd (N, n), number of failed solves)``; inactive/failed hold ``q``."""
+    def solve(self) -> tuple[np.ndarray, int]:
+        """Solve every active env from the inputs in ``self.v``. Returns ``(command (N, n), number of failed solves)``.
+
+        Inactive and failed envs get the controller's fallback (hold ``q`` for ``ik_qp``, gravity/Coriolis
+        compensation ``h`` for ``impedance``). ``reset`` flags are consumed (cleared) by the solve.
+        """
         v = self.v
-        v["q"][:], v["ee_pos"][:], v["ee_quat"][:], v["jac"][:] = q, ee_pos, ee_quat, jacobian
-        v["target"][:], v["ori"][:], v["active"][:] = target, ori, active
-        for p in self._procs:
-            p.stdin.write(b"s\n")
-            p.stdin.flush()
-        for p in self._procs:
-            self._read(p)
-        return v["q_cmd"].copy(), int(v["failed"].sum())
+        if self._local is not None:
+            self._local.solve(v)
+        else:
+            for p in self._procs:
+                p.stdin.write(b"s\n")
+                p.stdin.flush()
+            for p in self._procs:
+                self._read(p)
+        v["reset"][:] = 0.0
+        return v["command"].copy(), int(v["failed"].sum())
 
     def close(self):
         for p in self._procs:

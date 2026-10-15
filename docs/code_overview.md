@@ -42,7 +42,7 @@ PoseTarget (world frame) ─┐
 | `robots/model.py` | `RobotModel` ABC: `joint_names`, `position_limits`, `get_state`, `get_com_state`, `get_pose(frame)`, `get_jacobian(frame)`, `apply_command`. The only thing a controller knows about the simulator. |
 | `robots/state.py` | Validated dataclasses `JointState`, `CenterOfMassState`, `Pose` (xyzw), `JointPositionCommand`. |
 | `controllers/base.py` | `Controller[TargetT, CommandT]` ABC: `compute(target, dt)`, `reset()`. |
-| `controllers/ik_qp/controller.py` | `InverseKinematicsController(robot, IKQPConfig)`; inputs `PoseTarget`, outputs `JointPositionCommand`. |
+| `controllers/ik_qp/ik_qp_mujoco.py` | `InverseKinematicsController(robot, IKQPConfig)`; inputs `PoseTarget`, outputs `JointPositionCommand`. |
 | `sim_interfaces/mujoco/adapter.py` | `MujocoRobotModel`: `from_xml_path(...)` + `initialize(...)`; maps joints to actuators; also `apply_base_command`. |
 | `sim_interfaces/mujoco/modifier.py` | `MujocoModifier.build_mobile_base_spec(...)` adds x/y/yaw slide joints under link0; `update_overlay(...)` draws COM + target frames in the viewer. |
 | `sim_interfaces/mujoco/models/panda/` | Panda XML + meshes (`scene.xml` is the entry point). |

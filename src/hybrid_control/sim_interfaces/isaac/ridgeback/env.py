@@ -34,7 +34,7 @@ class RidgebackDREnv:
         sim: SimulationContext,
         spacing: float = 2.5,
         num_cols: int | None = None,
-        friction: float = 0.0,
+        friction: float = 0.05,
         tau: float = 0.15,
         max_force: float = 1000.0,
     ):

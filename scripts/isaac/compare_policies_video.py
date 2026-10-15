@@ -17,6 +17,8 @@ from pathlib import Path
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
+from hybrid_control.rl.config import CONTROLLERS, saved_controller, saved_observation_cfg
+
 OUT_DIR = Path(__file__).resolve().parents[2] / "out"
 parser = argparse.ArgumentParser(description="Side-by-side video of a trained and an untrained base policy.")
 parser.add_argument("--trained", type=str, required=True)
@@ -29,10 +31,13 @@ parser.add_argument("--seed", type=int, default=3)
 parser.add_argument("--seconds", type=float, default=15.0)
 parser.add_argument("--spacing", type=float, default=2.4)
 parser.add_argument("--qp_workers", type=int, default=4)
+parser.add_argument("--controller", choices=CONTROLLERS, default=None,
+                    help="Arm controller; default: the one --trained was trained with (<run>/params/env.yaml).")
 parser.add_argument("--video_path", type=str, default=str(OUT_DIR / "policy_comparison.mp4"))
 parser.add_argument("--video_fps", type=int, default=30)
 add_launcher_args(parser)
 args_cli = parser.parse_args()
+args_cli.controller = args_cli.controller or saved_controller(args_cli.trained)
 args_cli.enable_cameras = True
 
 import math
@@ -92,7 +97,7 @@ def main():
             for side in ("L", "R")
         ]
         base_env.start()
-        env = BaseStabilizationEnv(base_env, StabilizationEnvCfg(qp_workers=args_cli.qp_workers), seed=args_cli.seed)
+        env = BaseStabilizationEnv(base_env, StabilizationEnvCfg(controller=args_cli.controller, qp_workers=args_cli.qp_workers, observation=saved_observation_cfg(args_cli.trained)), seed=args_cli.seed)
         n, dev = env.num_envs, env.device
 
         # Identical scenarios in both halves: same dynamics (the footprint is already equal) and same trajectory.

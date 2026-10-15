@@ -138,6 +138,27 @@ class MassModel:
         self.robot.set_inertias_index(inertias=inertia, env_ids=env_ids)
 
 
+def franka_tcp_offset() -> "Pose":  # noqa: F821
+    """``panda_hand -> panda_fingertip_centered`` from Isaac Lab's Factory Franka (franka_mimic.usd), xyzw.
+
+    Same source as the TCP of the base-disturbance demos. Needs Kit running (imports ``pxr``).
+    """
+    import numpy as np
+    from pxr import Usd, UsdGeom
+
+    from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR, retrieve_file_path
+
+    from hybrid_control.robots.state import Pose
+
+    hand, tcp = "panda_hand", "panda_fingertip_centered"
+    stage = Usd.Stage.Open(retrieve_file_path(f"{ISAACLAB_NUCLEUS_DIR}/Factory/franka_mimic.usd"))
+    cache = UsdGeom.XformCache()
+    world = {p.GetName(): cache.GetLocalToWorldTransform(p) for p in stage.Traverse() if p.GetName() in (hand, tcp)}
+    relative = world[tcp] * world[hand].GetInverse()  # Gf row-vector convention: TCP in hand
+    rotation = relative.ExtractRotationQuat()
+    return Pose(np.array(relative.ExtractTranslation()), np.array([*rotation.GetImaginary(), rotation.GetReal()]))
+
+
 def tilt(quat_xyzw: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Batched (roll, pitch, yaw) [rad] of xyzw quaternions (Isaac Lab 3.0 order), each of shape (N,)."""
     x, y, z, w = quat_xyzw.unbind(-1)
@@ -149,5 +170,5 @@ def tilt(quat_xyzw: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Ten
 
 __all__ = [
     "MOUNT_X", "PANDA_RATED_PAYLOAD", "Q_STRETCHED", "ROOT_HEIGHT", "STOCK_HEIGHT", "MassModel",
-    "build_robot_cfg", "free_and_resize_base", "tilt",
+    "build_robot_cfg", "franka_tcp_offset", "free_and_resize_base", "tilt",
 ]

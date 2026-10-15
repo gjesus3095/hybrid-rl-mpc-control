@@ -2,6 +2,35 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import dataclasses
+
+from .observations import ObservationCfg
+from .qp_pool import CONTROLLERS  # noqa: F401  (re-exported for the scripts' --controller choices)
+
+
+def _saved_env_cfg(checkpoint: str) -> dict:
+    """``<run>/params/env.yaml`` next to a checkpoint, or ``{}`` if there is none."""
+    import yaml
+
+    path = Path(checkpoint).resolve().parent / "params" / "env.yaml"
+    return (yaml.safe_load(path.read_text()) or {}) if path.is_file() else {}
+
+
+def saved_controller(checkpoint: str, default: str = "ik_qp") -> str:
+    """Arm controller a checkpoint was trained with: ``controller`` in ``<run>/params/env.yaml`` next to it, else
+    ``default`` (runs from before the ``--controller`` option have no such file and used the IK/QP)."""
+    return _saved_env_cfg(checkpoint).get("controller", default)
+
+
+def saved_observation_cfg(checkpoint: str) -> ObservationCfg:
+    """Observation config a checkpoint was trained with, so its network input size matches. Options missing from an
+    older ``env.yaml`` take the value they had before they existed (``com_offset_in_actor``: False)."""
+    saved = {"com_offset_in_actor": False, **_saved_env_cfg(checkpoint).get("observation", {})}
+    names = {f.name for f in dataclasses.fields(ObservationCfg)}
+    return ObservationCfg(**{k: tuple(v) if isinstance(v, list) else v for k, v in saved.items() if k in names})
+
 
 def make_runner_cfg(
     num_steps_per_env: int = 24,

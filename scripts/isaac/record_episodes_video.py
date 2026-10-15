@@ -10,6 +10,8 @@ Modes for the policy (``--mode``):
   deterministic  the network's mean action (what ``play_base_policy.py`` evaluates)
   sampled        mean action + Gaussian noise (``--noise_std``): how a policy acts while it explores, i.e. an untrained
                  network looks random. Use with an early checkpoint to show an untrained policy.
+  none           no policy: zero base command (base parked), only the arm controller acts. The checkpoint is still
+                 needed to pick the arm controller it was trained with.
 
 Usage (from the Isaac Lab folder):
 
@@ -22,11 +24,13 @@ from pathlib import Path
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
+from hybrid_control.rl.config import CONTROLLERS, saved_controller, saved_observation_cfg
+
 OUT_DIR = Path(__file__).resolve().parents[2] / "out"
 parser = argparse.ArgumentParser(description="Record one env over multiple episodes.")
 parser.add_argument("--checkpoint", type=str, required=True)
 parser.add_argument("--title", type=str, default="POLICY")
-parser.add_argument("--mode", choices=["deterministic", "sampled"], default="deterministic")
+parser.add_argument("--mode", choices=["deterministic", "sampled", "none"], default="deterministic")
 parser.add_argument("--noise_std", type=float, default=0.5)
 parser.add_argument("--episodes", type=int, default=6)
 parser.add_argument("--seed", type=int, default=3)
@@ -34,10 +38,13 @@ parser.add_argument("--spacing", type=float, default=8.0, help="Distance between
 parser.add_argument("--hold_tipped", type=float, default=1.5, help="Seconds a tipped robot stays on screen.")
 parser.add_argument("--hold_end", type=float, default=0.5, help="Seconds after a completed episode.")
 parser.add_argument("--qp_workers", type=int, default=2)
+parser.add_argument("--controller", choices=CONTROLLERS, default=None,
+                    help="Arm controller; default: the one the checkpoint was trained with (<run>/params/env.yaml).")
 parser.add_argument("--video_path", type=str, default=str(OUT_DIR / "episodes.mp4"))
 parser.add_argument("--video_fps", type=int, default=30)
 add_launcher_args(parser)
 args_cli = parser.parse_args()
+args_cli.controller = args_cli.controller or saved_controller(args_cli.checkpoint)
 args_cli.enable_cameras = True
 
 import numpy as np
@@ -110,7 +117,7 @@ def main():
             )
         )
         base_env.start()
-        env = BaseStabilizationEnv(base_env, StabilizationEnvCfg(qp_workers=args_cli.qp_workers), seed=args_cli.seed)
+        env = BaseStabilizationEnv(base_env, StabilizationEnvCfg(controller=args_cli.controller, qp_workers=args_cli.qp_workers, observation=saved_observation_cfg(args_cli.checkpoint)), seed=args_cli.seed)
         env.auto_reset = False
         dev = env.device
         runner = OnPolicyRunner(env, make_runner_cfg(), log_dir=None, device=str(dev))
@@ -138,7 +145,8 @@ def main():
         with torch.inference_mode():
             while episode <= k:
                 a = torch.zeros(n, 3, device=dev)
-                a[episode] = policy(obs[episode : episode + 1])[0]
+                if args_cli.mode != "none":
+                    a[episode] = policy(obs[episode : episode + 1])[0]
                 if args_cli.mode == "sampled":
                     a[episode] += args_cli.noise_std * torch.randn(3, device=dev, generator=gen)
                 obs, _, dones, extras = env.step(a)
