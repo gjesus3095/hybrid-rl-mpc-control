@@ -6,7 +6,7 @@ Source: `src/hybrid_control/rl/` (`observations.py`, `rewards.py`, `env.py`). "B
 
 | Term | Dim | Purpose |
 |---|---|---|
-| `base_velocity` | 3 | Base-frame (vx, vy, wz) in [-1, 1], scaled to (0.5 m/s, 0.5 m/s, 0.6 rad/s); the only thing the policy controls. The arm is driven by the QP (`--controller ik_qp` or `impedance`). |
+| `base_velocity` | 3 | Base-frame (vx, vy, wz) in [-1, 1], scaled to (1 m/s, 1 m/s, 0.6 rad/s); the only thing the policy controls. The arm is driven by the QP (`--controller ik_qp` or `impedance`). |
 
 ## Observations
 
@@ -40,7 +40,7 @@ Critic (43) = actor + privileged:
 | `tilt` | -1.0 | (roll² + pitch²) / 0.25² | Penalize leaning before it becomes a tip-over. |
 | `centre` | 0.5 | exp(-(max(d - 0.35, 0) / 0.5)²), d = footprint centre → trajectory centre | Stay near the trajectory the arm serves. |
 | `progress` | 1.0 | clamp(rate of approach of d beyond 0.35 m, -1, 1) | Potential-based shaping toward the trajectory; back-and-forth earns nothing. |
-| `speed` | -0.5 | (\|v_base\| / 0.5)² | Prefer slow base motion. |
+| `speed` | -1.0 | (\|v_base\| / 1.0)² | Prefer slow base motion. |
 | `spin` | -1.0 | (yaw rate / 0.6)² | Prevent spinning. |
 | `yaw` | -0.3 | clamp(yaw / 0.6, -3, 3)² | No reason to turn away from the spawn heading. |
 | `action_rate` | -0.3 | \|a_t - a_t-1\|² | Smooth commands. |
@@ -56,4 +56,4 @@ Critic (43) = actor + privileged:
 | `left_footprint` | no | Total COM outside the footprint: statically unstable, counted as failure. |
 | `time_out` | yes | 5 s episode limit (= the trajectory duration); bootstrapped, not penalized. |
 
-At reset: new base mass (5.5–38 kg), payload (0.8–3 kg) and reference trajectory (fixed point 20 %, Lissajous with an oscillating down-pointing orientation 40 %, quintic spawn → A (2.5 s) → B (2.5 s) pose path 40 %); footprint (0.19–0.52 m per side) is fixed per env at spawn.
+At reset: new base mass (5.5–38 kg), payload (0–3 kg) and reference trajectory (fixed point 20 %, Lissajous with an oscillating down-pointing orientation 40 %, quintic spawn → A (2.5 s) → B (2.5 s) pose path 40 %); footprint (0.19–0.52 m per side) is fixed per env at spawn.

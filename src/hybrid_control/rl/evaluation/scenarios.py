@@ -8,20 +8,25 @@ reference pose table (env-local coordinates, sampled at ``REF_DT``) plus the bas
 - ``fixed``: fixed points, drawn like training (``ReferenceTrajectories``) but only those the arm can follow from the spawn
   pose with a fixed base (``reachability.ArmReach``: IK along the timed reference, joint limits and speeds).
 - ``sine``: Lissajous sines at full difficulty, drawn like training and filtered for reachability the same way.
-- ``poly``: quintic spawn -> A -> B (2.5 s + 2.5 s), drawn like training.
+- ``poly``: quintic spawn -> A -> B (2.5 s + 2.5 s), drawn like training: the quintic is the time scaling, the path of
+  each segment a Bezier curve of order ``trajectory.spatial_order`` (1 = straight line, as before the option existed).
 - ``poly_far``: generalization. Spawn -> A as in training, then A -> B with B outside the training reach: its x-y distance
   from the arm base is in ``[far_min_radius_xy, far_max_radius_xy]`` (0.9-2.0 m; training stays within 0.8 m of the arm
   base) and its height in the training height range, so it is only reachable once the base has driven toward it. A -> B
   takes ``max(2.5 s, L / ref_speed)``, ``ref_speed`` being the mean speed of the training A -> B legs, so the speed
-  profile matches training and only the geometry is new. ``hold_time`` of holding B is appended.
+  profile matches training and only the geometry is new. ``hold_time`` of holding B is appended. Both segments are
+  Bezier curves of order ``trajectory.spatial_order`` like ``poly`` (A -> B: interior control points within
+  ``curve_deviation`` of the straight line, the curve kept outside the robot's cylinder and above the height limit, L
+  being its arc length).
 - ``rigid``: straight lines at constant speed (trapezoidal speed ramp at start and end, no quintic) from the spawn pose:
   a third are single straight legs, a third have one 90 degree bend and a third two, with rounded corners
   (``corner_radius``). The TCP orientation is held. The whole path stays inside the training workspace (ball around the
   arm base, outside the inner cylinder, above the height limit) and is reachable by a fixed base (``ArmReach``). ``hold_time`` of holding the end is appended.
 
 - ``ellipse``: loops around the arm base axis: ellipses (circles are the equal-axes case) with random semi-axes and
-  orientation, centred on the arm base's x-y, whose height oscillates along the loop (``ellipse_z_*``). Even scenarios
-  are full revolutions, odd ones half revolutions, in a random direction from a random start angle. The TCP gets from the
+  orientation, centred on the arm base's x-y, whose height oscillates along the loop (``ellipse_z_*``). All scenarios
+  are half revolutions, in a random direction from a random start angle (with ``ellipse_full_revolutions`` the even
+  ones go all the way around the base instead). The TCP gets from the
   spawn pose to the start of the loop with a rest-to-rest quintic (timed at ``ref_speed``), then runs the loop at a
   constant tangential speed (``ellipse_speed``, within the training speeds; trapezoidal ramp from and to rest). The
   orientation is held. The path stays inside the training workspace.
@@ -35,7 +40,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 
 import numpy as np
@@ -43,7 +48,7 @@ import torch
 
 from hybrid_control.rl.evaluation.reachability import ArmReach, ReachCfg
 from hybrid_control.rl.policy_with_controller.trajectories import (
-    FIXED, QUINTIC, SINE, ReferenceTrajectories, TrajectoryCfg, quintic_time_scaling,
+    FIXED, QUINTIC, SINE, ReferenceTrajectories, TrajectoryCfg, bezier_eval, quintic_time_scaling,
 )
 from hybrid_control.sim_interfaces.isaac.ridgeback.params import BaseParams, DomainRandomization
 from hybrid_control.utils.torch_rotations import quat_conj, quat_from_rotvec, quat_mul, quat_to_rotvec
@@ -65,6 +70,7 @@ class BenchmarkCfg:
     controller: str = "ik_qp"  # arm controller the references are for: it fixes the TCP (hence the spawn pose)
     n_per_set: int = 100
     trajectory: TrajectoryCfg = field(default_factory=TrajectoryCfg)  # training sampler for fixed / sine / poly
+    # (``trajectory.spatial_order``: Bezier order of the poly / poly_far paths; see ``with_spatial_order``)
     reach: ReachCfg = field(default_factory=ReachCfg)  # fixed, sine and rigid keep only references a fixed base can follow
     # --- poly_far ---
     far_min_radius_xy: float = 0.9  # B is at least this far from the arm base in x-y [m] (> the 0.8 m training ball)
@@ -83,7 +89,16 @@ class BenchmarkCfg:
     ellipse_z_centre: tuple[float, float] = (0.50, 0.75)  # mean height of the loop [m]
     ellipse_z_amp: tuple[float, float] = (0.0, 0.20)  # amplitude of the height oscillation over one revolution [m]
     ellipse_speed: tuple[float, float] = (0.20, 0.35)  # constant tangential speed [m/s]
+    ellipse_full_revolutions: bool = False  # True: even scenarios loop all the way around the base (excluded by default)
     max_draws: int = 10000
+
+    @classmethod
+    def with_spatial_order(cls, spatial_order: int, **kwargs) -> BenchmarkCfg:
+        """Config whose poly / poly_far paths are Bezier curves of ``spatial_order`` (1 = straight segments)."""
+        if spatial_order < 1:
+            raise ValueError(f"spatial_order must be >= 1, got {spatial_order}")
+        trajectory = replace(kwargs.pop("trajectory", TrajectoryCfg()), spatial_order=int(spatial_order))
+        return cls(trajectory=trajectory, **kwargs)
 
     @property
     def spawn(self) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
@@ -143,7 +158,9 @@ class Benchmark:
     def load(cls, path: str | Path) -> Benchmark:
         data = np.load(path, allow_pickle=False)
         meta = json.loads(str(data["meta"]))
-        trajectory = TrajectoryCfg(**{k: tuple(v) if isinstance(v, list) else v for k, v in meta.pop("trajectory").items()})
+        names = {f.name for f in fields(TrajectoryCfg)}  # drops options removed since (e.g. blend_time)
+        trajectory = TrajectoryCfg(**{k: tuple(v) if isinstance(v, list) else v
+                                      for k, v in meta.pop("trajectory").items() if k in names})
         reach = ReachCfg(**meta.pop("reach", {}))  # benchmarks saved before the reachability filter have none
         cfg = BenchmarkCfg(trajectory=trajectory, reach=reach, **{k: tuple(v) if isinstance(v, list) else v for k, v in meta.items()})
         sets = {}
@@ -207,15 +224,17 @@ def _training_set(cfg: BenchmarkCfg, kind: int, seed: int, n: int) -> dict:
     if kind == SINE:
         info.update(amplitude=traj.amplitude, frequency=traj.frequency, phase=traj.phase)
     if kind == QUINTIC:
-        info.update(waypoints=traj.waypoints, waypoint_quat=traj.waypoint_quat)
+        info.update(waypoints=traj.waypoints, waypoint_quat=traj.waypoint_quat, control_points=traj.control_points)
     return dict(poses=poses[keep], duration=np.full(n, cfg.trajectory.duration, np.float32),
                 centre=traj.centre.numpy()[keep], info={k: v.numpy().astype(np.float32)[keep] for k, v in info.items()})
 
 
-def quintic_chain(points: torch.Tensor, quats: torch.Tensor, seg_time: torch.Tensor, t: torch.Tensor):
+def quintic_chain(points: torch.Tensor, quats: torch.Tensor, seg_time: torch.Tensor, t: torch.Tensor,
+                  control_points: torch.Tensor | None = None):
     """Rest-to-rest quintic pose segments through ``points`` (n, 3, 3) / ``quats`` (n, 3, 4): spawn -> A (``seg_time[:, 0]``)
     -> B (``seg_time[:, 1]``), sampled at times ``t`` (T,). Returns positions (n, T, 3) and quaternions (n, T, 4); the last
-    pose is held. Same maths as ``ReferenceTrajectories`` with per-scenario segment durations."""
+    pose is held. Same maths as ``ReferenceTrajectories`` with per-scenario segment durations: the quintic s(t) runs along
+    the Bezier curves ``control_points`` (n, 2, order + 1, 3) of the two segments, or the straight segments if None."""
     n = len(points)
     rotvec = quat_to_rotvec(quat_mul(quats[:, 1:], quat_conj(quats[:, :-1])))  # (n, 2, 3), shortest rotation
     tt = t[None, :].expand(n, -1)
@@ -224,9 +243,21 @@ def quintic_chain(points: torch.Tensor, quats: torch.Tensor, seg_time: torch.Ten
     s, _, _ = quintic_time_scaling(torch.where(first[..., 0], tt, tt - t0), torch.where(first[..., 0], t0, seg_time[:, 1:]))
     s = s[..., None]
     pick = lambda a, b: torch.where(first, a[:, None], b[:, None])  # noqa: E731
-    p0, p1 = pick(points[:, 0], points[:, 1]), pick(points[:, 1], points[:, 2])
     q0, r = pick(quats[:, 0], quats[:, 1]), pick(rotvec[:, 0], rotvec[:, 1])
-    return p0 + s * (p1 - p0), quat_mul(quat_from_rotvec(s * r), q0)
+    quat = quat_mul(quat_from_rotvec(s * r), q0)
+    if control_points is None or control_points.shape[-2] == 2:  # straight: same numbers as before the Bezier option
+        p0, p1 = pick(points[:, 0], points[:, 1]), pick(points[:, 1], points[:, 2])
+        return p0 + s * (p1 - p0), quat
+    control = torch.where(first[..., None], control_points[:, None, 0], control_points[:, None, 1])  # (n, T, order+1, 3)
+    return bezier_eval(control, s)[..., 0, :], quat
+
+
+def bezier_length(control_points: torch.Tensor, samples: int = 1000) -> torch.Tensor:
+    """(m,) arc lengths of the Bezier curves ``control_points`` (m, order + 1, 3) (exact for straight segments)."""
+    if control_points.shape[-2] == 2:
+        return (control_points[:, 1] - control_points[:, 0]).norm(dim=-1)
+    u = torch.linspace(0.0, 1.0, samples + 1, dtype=control_points.dtype)[None].expand(len(control_points), -1)
+    return bezier_eval(control_points, u).diff(dim=1).norm(dim=-1).sum(1)
 
 
 def _pad(tables: list[np.ndarray], t_len: int) -> np.ndarray:
@@ -247,11 +278,15 @@ def _far_set(cfg: BenchmarkCfg, seed: int, n: int) -> dict:
     tc = cfg.trajectory
     sampler = ReferenceTrajectories(n, "cpu", tc)
     start, start_quat = _spawn(cfg, n)
-    points, quats = sampler._sample_quintic(start, start_quat)  # spawn, A, B (a training B, replaced below) + orientations
+    # spawn, A, B (a training B, replaced below), orientations and the curves spawn -> A, A -> B (the latter replaced too)
+    points, quats, control = sampler._sample_quintic(start, start_quat)
     a = points[:, 1]
 
-    # B in the annulus around the arm base, outside the training ball, and the straight A -> B must not cross the robot
+    # B in the annulus around the arm base, outside the training ball, and A -> B must not cross the robot
     segment_checker = ReferenceTrajectories(n, "cpu", replace(tc, outer_radius=1e3))
+    order = tc.spatial_order
+    frac = torch.arange(order + 1, dtype=torch.float32)[None, :, None] / order  # straight-line positions of the control points
+    curve_b = torch.zeros(n, order + 1, 3)
     centre_xy = np.array(tc.arm_base[:2])
     b = np.zeros((n, 3), np.float32)
     pending = np.ones(n, bool)
@@ -264,25 +299,32 @@ def _far_set(cfg: BenchmarkCfg, seed: int, n: int) -> dict:
         theta = rng.uniform(0.0, 2 * np.pi, len(idx))
         cand = np.stack([centre_xy[0] + r * np.cos(theta), centre_xy[1] + r * np.sin(theta),
                          rng.uniform(*cfg.far_z, len(idx))], axis=-1).astype(np.float32)
-        ok = segment_checker.segment_valid(a[idx], torch.from_numpy(cand)).numpy()
+        curve = a[idx, None] + frac * (torch.from_numpy(cand) - a[idx])[:, None]
+        if order > 1:  # interior offsets uniform in the curve_deviation ball, as in training (torch RNG, seeded above)
+            offset = torch.randn(len(idx), order - 1, 3)
+            offset = offset / offset.norm(dim=-1, keepdim=True).clamp_min(1e-9)
+            curve[:, 1:-1] += offset * tc.curve_deviation * torch.rand(len(idx), order - 1, 1) ** (1.0 / 3.0)
+        ok = segment_checker.curve_valid(curve).numpy()
         b[idx[ok]] = cand[ok]
+        curve_b[idx[ok]] = curve[ok]
         pending[idx[ok]] = False
     else:
         raise RuntimeError("no valid far B point found; check the BenchmarkCfg radii")
     points = points.clone()
     points[:, 2] = torch.from_numpy(b)
+    control = torch.stack([control[:, 0], curve_b], dim=1)
 
-    length = (points[:, 2] - points[:, 1]).norm(dim=-1)
+    length = bezier_length(curve_b)  # A -> B path length
     seg = torch.stack([torch.full((n,), float(tc.segment_time[0])),
                        torch.clamp(length / cfg.ref_speed, min=float(tc.segment_time[1]))], dim=-1)
     duration = seg.sum(-1) + cfg.hold_time
     t = torch.tensor(_grid(float(duration.max())), dtype=torch.float32)
-    pos, quat = quintic_chain(points, quats, seg, t)
+    pos, quat = quintic_chain(points, quats, seg, t, control)
     centre = 0.5 * (points[:, 1] + points[:, 2])
     return dict(poses=_poses(pos.numpy(), quat.numpy()), duration=duration.numpy().astype(np.float32),
                 centre=centre.numpy(),
                 info={"waypoints": points.numpy(), "waypoint_quat": quats.numpy(), "segment_time": seg.numpy(),
-                      "ab_length": length.numpy()})
+                      "ab_length": length.numpy(), "control_points": control.numpy()})
 
 
 # ----------------------------------------------------------------------------------------------
@@ -406,7 +448,7 @@ def _ellipse_set(cfg: BenchmarkCfg, seed: int, n: int) -> dict:
     start = np.array(cfg.spawn[0])
     tables, durations, shapes, thetas, speeds, entry_times = [], [], [], [], [], []
     for i in range(n):
-        sweep = 2 * math.pi if i % 2 == 0 else math.pi  # alternating full and half revolutions
+        sweep = 2 * math.pi if cfg.ellipse_full_revolutions and i % 2 == 0 else math.pi  # half (or alternating full) revolutions
         for _ in range(cfg.max_draws):
             a, b = rng.uniform(*cfg.ellipse_semi_axes, 2)
             yaw, z_phase, theta0 = rng.uniform(0.0, math.pi), rng.uniform(0.0, 2 * math.pi), rng.uniform(0.0, 2 * math.pi)

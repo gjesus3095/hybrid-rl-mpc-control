@@ -22,7 +22,7 @@ import argparse
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
-from hybrid_control.rl.config import CONTROLLERS, saved_controller, saved_observation_cfg
+from hybrid_control.rl.config import CONTROLLERS, saved_controller, saved_max_base_speed, saved_observation_cfg
 
 parser = argparse.ArgumentParser(description="Evaluate a policy on the deterministic benchmark.")
 parser.add_argument("--checkpoint", type=str, default=None)
@@ -34,6 +34,9 @@ parser.add_argument("--benchmark", type=str, default=None,
                     help="Benchmark .npz from scripts/generate_eval_set.py (for the same --controller); default: generate it in memory.")
 parser.add_argument("--ellipse_speed", type=float, nargs=2, default=None, metavar=("LOW", "HIGH"),
                     help="Override the tangential speed range of the ellipse set [m/s] (only when the benchmark is generated in memory).")
+parser.add_argument("--spatial_order", type=int, default=1,
+                    help="Bezier order of the poly / poly_far paths (1 = straight segments; only when the benchmark is generated "
+                         "in memory). Fixed by default so every policy sees the same benchmark; other orders get an _order<n> suffix.")
 parser.add_argument("--sets", nargs="+", default=None, help="Sets to run (default: all in the benchmark).")
 parser.add_argument("--num_scenarios", type=int, default=None,
                     help="Only the first N scenarios of every set, e.g. for a smoke test (same scenarios as in the full run).")
@@ -152,19 +155,24 @@ def git_state() -> str:
 
 def main():
     benchmark = (Benchmark.load(args_cli.benchmark) if args_cli.benchmark
-                 else generate_benchmark(BenchmarkCfg(controller=args_cli.controller,
-                                                           **({"ellipse_speed": tuple(args_cli.ellipse_speed)} if args_cli.ellipse_speed else {}))))
+                 else generate_benchmark(BenchmarkCfg.with_spatial_order(
+                     args_cli.spatial_order, controller=args_cli.controller,
+                     **({"ellipse_speed": tuple(args_cli.ellipse_speed)} if args_cli.ellipse_speed else {}))))
+    order = benchmark.cfg.trajectory.spatial_order
     if benchmark.cfg.controller != args_cli.controller:
         raise SystemExit(f"benchmark was generated for the {benchmark.cfg.controller!r} controller (TCP spawn pose), "
                          f"not {args_cli.controller!r}")
     names = args_cli.sets or [n for n in SET_NAMES if n in benchmark.sets]
     slots = args_cli.num_scenarios or benchmark.cfg.n_per_set
     ckpt = args_cli.checkpoint
-    name = args_cli.name or (f"{Path(ckpt).resolve().parent.name}_{Path(ckpt).stem}" if ckpt else "zero_policy") + ("_fixed_base" if args_cli.fixed_base else "")
+    name = args_cli.name or ((f"{Path(ckpt).resolve().parent.name}_{Path(ckpt).stem}" if ckpt else "zero_policy")
+                             + ("_fixed_base" if args_cli.fixed_base else "") + (f"_order{order}" if order != 1 else ""))
     out_dir = Path(args_cli.out_dir or Path(__file__).resolve().parents[2] / "out" / "eval" / name)
     out_dir.mkdir(parents=True, exist_ok=True)
-    print(f"[EVAL] benchmark {benchmark.fingerprint()}, sets {names}, {slots} scenarios each -> {out_dir}", flush=True)
+    print(f"[EVAL] benchmark {benchmark.fingerprint()} (poly paths of Bezier order {order}), sets {names}, "
+          f"{slots} scenarios each -> {out_dir}", flush=True)
 
+    max_speed = saved_max_base_speed(ckpt) if ckpt else None  # the action scaling the policy was trained with
     sim_cfg = sim_utils.SimulationCfg(dt=1.0 / 120.0, device=args_cli.device)
     with launch_simulation(sim_cfg, args_cli):
         sim = SimulationContext(sim_cfg)
@@ -174,6 +182,7 @@ def main():
         env = BaseStabilizationEnv(
             base_env,
             StabilizationEnvCfg(controller=args_cli.controller, qp_workers=args_cli.qp_workers, episode_length_s=3600.0,
+                                **({"max_base_speed": max_speed} if max_speed else {}),
                                 observation=saved_observation_cfg(ckpt) if ckpt and not args_cli.current_observation else ObservationCfg()),
             seed=args_cli.seed,
         )
@@ -220,13 +229,14 @@ def main():
             meta = {
                 "name": name, "checkpoint": ckpt, "zero_policy": args_cli.zero_policy, "fixed_base": args_cli.fixed_base,
                 "controller": args_cli.controller, "payload_kg": payload, "benchmark_seed": benchmark.cfg.seed, "scenarios_per_set": slots,
+                "spatial_order": order, "max_base_speed": list(env.scfg.max_base_speed),
                 "policy_dt": env.dt, "git": git_state(), "date": datetime.now().isoformat(timespec="seconds"),
             }
             merged, fingerprints = dict(summaries), {n: benchmark.fingerprint([n]) for n in summaries}
             summary_path = run_dir / "summary.json"
             if summary_path.exists():  # add to an earlier run of the same policy (e.g. a set added to the benchmark later)
                 before = json.loads(summary_path.read_text())
-                keys = ("checkpoint", "zero_policy", "fixed_base", "controller", "scenarios_per_set", "payload_kg")
+                keys = ("checkpoint", "zero_policy", "fixed_base", "controller", "scenarios_per_set", "payload_kg", "spatial_order")
                 if all(before["meta"].get(k) == meta[k] for k in keys):
                     merged = {**before["sets"], **summaries}
                     fingerprints = {**before["meta"].get("set_fingerprints", {}), **fingerprints}

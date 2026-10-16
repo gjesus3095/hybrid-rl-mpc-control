@@ -18,8 +18,11 @@ from pathlib import Path
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
-from hybrid_control.rl.config import CONTROLLERS, qp_solver_name, saved_controller, saved_observation_cfg, saved_qp_solver
-from hybrid_control.rl.policy_with_controller.trajectories import KINDS
+from hybrid_control.rl.config import (
+    CONTROLLERS, qp_solver_name, saved_controller, saved_observation_cfg, saved_qp_solver, saved_spatial_order,
+)
+from hybrid_control.rl.policy_with_controller.trajectories import KINDS, TrajectoryCfg
+from hybrid_control.sim_interfaces.isaac.ridgeback.params import VIDEO_LIGHT
 
 OUT_DIR = Path(__file__).resolve().parents[2] / "out"
 parser = argparse.ArgumentParser(description="Side-by-side video of a trained and an untrained base policy.")
@@ -32,16 +35,28 @@ parser.add_argument("--pool", type=int, default=80)
 parser.add_argument("--kinds", nargs="+", choices=list(KINDS), default=list(KINDS),
                     help="Trajectory kinds, cycled over the scenarios.")
 parser.add_argument("--seed", type=int, default=3)
-parser.add_argument("--seconds", type=float, default=15.0)
+parser.add_argument("--seconds", type=float, default=5.0)
 parser.add_argument("--spacing", type=float, default=2.4)
 parser.add_argument("--qp_workers", type=int, default=4)
 parser.add_argument("--controller", choices=CONTROLLERS, default=None,
                     help="Arm controller; default: the one --trained was trained with (<run>/params/env.yaml).")
+parser.add_argument("--spatial_order", type=int, default=None,
+                    help="Bezier order of the quintic paths; default: the trained checkpoint's, 1 for old runs.")
 parser.add_argument("--video_path", type=str, default=str(OUT_DIR / "policy_comparison.mp4"))
 parser.add_argument("--video_fps", type=int, default=30)
+parser.add_argument("--light", type=float, default=VIDEO_LIGHT,
+                    help=f"Distant light intensity (default {VIDEO_LIGHT:g}; training and the viewer scripts use 3000, "
+                         "which overexposes the light ground in the camera images).")
 add_launcher_args(parser)
 args_cli = parser.parse_args()
 args_cli.controller = args_cli.controller or saved_controller(args_cli.trained)
+if args_cli.spatial_order is None:
+    # Both halves replay the same trajectories, so one order is used: the trained policy's.
+    args_cli.spatial_order = saved_spatial_order(args_cli.trained)
+    untrained_order = saved_spatial_order(args_cli.untrained)
+    if untrained_order != args_cli.spatial_order:
+        print(f"[WARN] the untrained checkpoint was trained with quintic path order {untrained_order}; both halves use "
+              f"the trained policy's order {args_cli.spatial_order} (override with --spatial_order)")
 args_cli.enable_cameras = True
 
 import math
@@ -79,7 +94,8 @@ def main():
         # Env 0 is a sacrificial dummy outside both views: in this setup the first env is not rendered (cause not found),
         # so the real scenarios live in envs 1..2k: 1..k trained, k+1..2k untrained, same scenario at i and i + k.
         all_params = [scenarios[0]] + scenarios + scenarios
-        base_env = RidgebackDREnv(all_params, sim, spacing=args_cli.spacing, num_cols=2 * k + 1)
+        base_env = RidgebackDREnv(all_params, sim, spacing=args_cli.spacing, num_cols=2 * k + 1,
+                                  light_intensity=args_cli.light)
 
         from isaaclab.sensors.camera import Camera, CameraCfg
         from isaaclab_physx.renderers import IsaacRtxRendererCfg
@@ -101,7 +117,7 @@ def main():
             for side in ("L", "R")
         ]
         base_env.start()
-        env = BaseStabilizationEnv(base_env, StabilizationEnvCfg(controller=args_cli.controller, qp_workers=args_cli.qp_workers, observation=saved_observation_cfg(args_cli.trained)), seed=args_cli.seed)
+        env = BaseStabilizationEnv(base_env, StabilizationEnvCfg(controller=args_cli.controller, qp_workers=args_cli.qp_workers, observation=saved_observation_cfg(args_cli.trained), trajectory=TrajectoryCfg(spatial_order=args_cli.spatial_order)), seed=args_cli.seed)
         n, dev = env.num_envs, env.device
 
         # Identical scenarios in both halves: same dynamics (the footprint is already equal) and same trajectory.

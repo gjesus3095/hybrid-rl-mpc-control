@@ -1,4 +1,5 @@
-"""One readable Markdown report of an ``evaluate_policy.py --payloads ...`` run (pure numpy, no Isaac imports).
+"""One readable Markdown report of an ``evaluate_policy.py`` run (pure numpy, no Isaac imports): of a ``--payloads ...``
+run (``payload_<kg>kg`` subfolders) or of a plain run where every scenario has its own payload (logs in the run folder).
 
 Every table has one row per metric and one column per trajectory type, plus an ``ALL`` column that pools every
 scenario. Pooled statistics (RMS, std, percentiles, ...) are recomputed from the per-step logs, not averaged from
@@ -69,11 +70,20 @@ ROWS = [
 ]
 
 
-def load_runs(eval_dir: str | Path) -> dict[float, dict[str, dict]]:
-    """``{payload_kg: {set: {logs..., "ik_failures": n}}}`` from the ``payload_<kg>kg`` folders of ``eval_dir``."""
+def run_folders(eval_dir: str | Path) -> dict[float | None, Path]:
+    """``{payload_kg: folder}`` of the ``payload_<kg>kg`` subfolders of ``eval_dir``, or ``{None: eval_dir}`` for a run
+    without ``--payloads`` (every scenario with its own payload)."""
+    eval_dir = Path(eval_dir)
+    folders = {float(f.name[len("payload_"):-len("kg")]): f for f in eval_dir.glob("payload_*kg")}
+    if not folders and (eval_dir / "summary.json").exists():
+        return {None: eval_dir}
+    return dict(sorted(folders.items()))
+
+
+def load_runs(eval_dir: str | Path) -> dict[float | None, dict[str, dict]]:
+    """``{payload_kg: {set: {logs..., "ik_failures": n}}}`` from the folders of ``run_folders``."""
     runs = {}
-    for folder in sorted(Path(eval_dir).glob("payload_*kg")):
-        payload = float(folder.name[len("payload_"):-len("kg")])
+    for payload, folder in run_folders(eval_dir).items():
         summary = json.loads((folder / "summary.json").read_text())
         sets = {}
         for name in SET_NAMES:
@@ -84,7 +94,7 @@ def load_runs(eval_dir: str | Path) -> dict[float, dict[str, dict]]:
                 part["ik_failures"] = summary["sets"][name]["ik_failures"]
                 sets[name] = part
         runs[payload] = sets
-    return dict(sorted(runs.items()))
+    return runs
 
 
 def summarize_parts(parts: list[dict]) -> dict:
@@ -123,39 +133,66 @@ def _columns(parts_by_set: dict[str, list[dict]]) -> dict[str, dict]:
     return columns
 
 
-def _kg(payload: float) -> str:
-    return f"{payload:g} kg"
+def _kg(payload: float | None) -> str:
+    return "own payload per scenario" if payload is None else f"{payload:g} kg"
+
+
+def _training_payload(checkpoint: str | None) -> str:
+    """Payload range of the checkpoint's domain randomization (``<run>/params/env.yaml``), e.g. "0-3 kg"."""
+    if checkpoint:
+        path = Path(checkpoint).parent / "params" / "env.yaml"
+        if path.is_file():
+            import yaml
+
+            low, high = ((yaml.safe_load(path.read_text()) or {}).get("domain_randomization") or {}).get("payload", (None, None))
+            if low is not None:
+                return f"{low:g}-{high:g} kg"
+    return "unknown"
 
 
 def build_report(eval_dir: str | Path) -> str:
     eval_dir = Path(eval_dir)
+    folders = run_folders(eval_dir)
+    if not folders:
+        raise ValueError(f"no summary.json or payload_<kg>kg folders in {eval_dir}")
     runs = load_runs(eval_dir)
-    if not runs:
-        raise ValueError(f"no payload_<kg>kg folders in {eval_dir}")
-    meta = json.loads((eval_dir / f"payload_{next(iter(runs)):g}kg" / "summary.json").read_text())["meta"]
+    meta = json.loads((next(iter(folders.values())) / "summary.json").read_text())["meta"]
     payloads = list(runs)
     sets = [n for n in SET_NAMES if all(n in r for r in runs.values())]
     n = {p: summarize_parts([runs[p][s] for s in sets])["scenarios"] for p in payloads}
+    trained = _training_payload(meta.get("checkpoint"))
+    policy = (f"checkpoint: `{meta['checkpoint']}`" if meta.get("checkpoint") else "policy: zero base command (no policy)") + (
+        ", base welded to the world (cannot move or tip, nothing terminates)" if meta.get("fixed_base") else "")
+    if payloads == [None]:
+        mass = (f"- extra mass at the gripper: each scenario's own payload, drawn like the training domain randomization"
+                + (f" (checkpoint trained with {trained})" if meta.get("checkpoint") else ""))
+    else:
+        mass = (f"- extra mass at the gripper: {', '.join(_kg(p) for p in payloads)} (the same {meta['scenarios_per_set']} scenarios "
+                f"per trajectory type each time; only the payload differs). Training used {trained}.")
 
     out = [
         f"# Evaluation report: {meta['name']}", "",
-        f"- checkpoint: `{meta['checkpoint']}`, arm controller: `{meta['controller']}`, benchmark `{meta['benchmark_fingerprint']}` "
-        f"(seed {meta['benchmark_seed']}), commit `{meta['git']}`, {meta['date']}",
-        f"- extra mass at the gripper: {', '.join(_kg(p) for p in payloads)} (the same {meta['scenarios_per_set']} scenarios "
-        f"per trajectory type each time; only the payload differs). Training used 0.8-3 kg, so 0 kg is outside the trained range.",
-        f"- trajectory types: {', '.join(sets)}; {n[payloads[0]]} scenarios per payload, {sum(n.values())} in total",
+        f"- {policy}; arm controller: `{meta['controller']}`, benchmark `{meta['benchmark_fingerprint']}` "
+        f"(seed {meta['benchmark_seed']}, poly paths of Bezier order {meta.get('spatial_order', 1)}), commit `{meta['git']}`, {meta['date']}",
+        mass,
+        f"- trajectory types: {', '.join(sets)}; {n[payloads[0]]} scenarios"
+        + (f" per payload, {sum(n.values())} in total" if len(payloads) > 1 else ""),
         "- failure = the whole-robot COM leaves the platform footprint or the platform tips (roll/pitch > 28.6 deg); "
-        "this is also the training termination criterion",
+        "this is also the training termination criterion"
+        + (". With the welded base nothing fails; `would have failed` counts the scenarios where it would have" if meta.get("fixed_base") else ""),
         "- every table: rows are metrics, columns are trajectory types, `ALL` pools all of them; definitions at the end", "",
     ]
 
-    out += ["## 1. All payloads together (" + " + ".join(_kg(p) for p in payloads) + ")", "",
-            markdown_table(_columns({s: [runs[p][s] for p in payloads] for s in sets})), "",
-            "### 1b. By payload (all trajectory types pooled)", "",
-            markdown_table({**{_kg(p): summarize_parts([runs[p][s] for s in sets]) for p in payloads},
-                            "all": summarize_parts([runs[p][s] for p in payloads for s in sets])}), ""]
-    for i, p in enumerate(payloads, start=2):
-        out += [f"## {i}. Extra mass {_kg(p)}", "", markdown_table(_columns({s: [runs[p][s]] for s in sets})), ""]
+    if payloads == [None]:
+        out += ["## 1. All scenarios", "", markdown_table(_columns({s: [runs[None][s]] for s in sets})), ""]
+    else:
+        out += ["## 1. All payloads together (" + " + ".join(_kg(p) for p in payloads) + ")", "",
+                markdown_table(_columns({s: [runs[p][s] for p in payloads] for s in sets})), "",
+                "### 1b. By payload (all trajectory types pooled)", "",
+                markdown_table({**{_kg(p): summarize_parts([runs[p][s] for s in sets]) for p in payloads},
+                                "all": summarize_parts([runs[p][s] for p in payloads for s in sets])}), ""]
+        for i, p in enumerate(payloads, start=2):
+            out += [f"## {i}. Extra mass {_kg(p)}", "", markdown_table(_columns({s: [runs[p][s]] for s in sets})), ""]
 
     out += [
         "## Definitions", "",

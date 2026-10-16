@@ -150,7 +150,7 @@ def test_ellipse_loops_are_centred_on_the_arm_base_inside_the_workspace_at_train
     s = benchmark.sets["ellipse"]
     cfg = benchmark.cfg
     theta = s.info["theta"]
-    assert (np.abs(theta[:, 1]) > 4).sum() == 15 and (np.abs(theta[:, 1]) < 4).sum() == 15  # full and half revolutions
+    assert np.allclose(np.abs(theta[:, 1]), np.pi)  # half revolutions only: none goes all the way around the base
     assert set(np.sign(theta[:, 1])) == {-1.0, 1.0}  # both directions
     assert np.allclose(s.centre[:, :2], ARM_BASE[:2])
     a, b, _, z0, z_amp, _ = s.info["shape"].T
@@ -178,3 +178,36 @@ def test_adding_sets_does_not_change_the_fingerprint_of_the_older_ones(benchmark
     older = tuple(n for n in SET_NAMES if n != "ellipse")
     assert benchmark.fingerprint(older) != benchmark.fingerprint()
     assert benchmark.fingerprint(older) == generate_benchmark(BenchmarkCfg(n_per_set=30)).fingerprint(older)
+
+
+@pytest.mark.parametrize("order", [2, 4])
+def test_poly_sets_follow_bezier_paths_of_the_set_order(order):
+    from hybrid_control.rl.evaluation.scenarios import QUINTIC, _far_set, _training_set
+    from hybrid_control.rl.policy_with_controller.trajectories import bezier_eval
+
+    cfg = BenchmarkCfg.with_spatial_order(order, n_per_set=12)
+    tc = cfg.trajectory
+    for name, data in (("poly", _training_set(cfg, QUINTIC, 7, 12)), ("poly_far", _far_set(cfg, 7, 12))):
+        control, wp = data["info"]["control_points"], data["info"]["waypoints"]
+        assert control.shape == (12, 2, order + 1, 3), name
+        assert np.allclose(control[:, :, 0], wp[:, :2], atol=1e-6) and np.allclose(control[:, :, -1], wp[:, 1:], atol=1e-6)
+        dense = bezier_eval(torch.from_numpy(control[:, 1]), torch.linspace(0, 1, 400)[None].expand(12, -1)).numpy()
+        straight = wp[:, 1:2] + np.linspace(0, 1, 400)[None, :, None] * (wp[:, 2:3] - wp[:, 1:2])
+        assert np.linalg.norm(dense - straight, axis=-1).max() > 1e-3, name  # actually curved
+        assert np.linalg.norm(dense[..., :2] - ARM_BASE[:2], axis=-1).min() >= tc.inner_radius_xy - 1e-4, name
+        assert dense[..., 2].min() >= tc.quintic_min_z - 1e-4, name
+        # the reference table runs along the curves and holds B
+        seg = data["info"].get("segment_time", np.tile(tc.segment_time, (12, 1)))
+        k = np.round((seg[:, 0] + 0.5 * seg[:, 1]) / REF_DT).astype(int)  # quintic s = 1/2 halfway through A -> B
+        mid = bezier_eval(torch.from_numpy(control[:, 1]), torch.full((12, 1), 0.5)).numpy()[:, 0]
+        assert np.allclose(data["poses"][np.arange(12), k, :3], mid, atol=2e-3), name
+        assert np.allclose(data["poses"][:, -1, :3], wp[:, 2], atol=1e-5), name
+    far = _far_set(cfg, 7, 12)["info"]
+    assert np.all(far["ab_length"] > np.linalg.norm(far["waypoints"][:, 2] - far["waypoints"][:, 1], axis=-1))  # arc length
+
+
+def test_spatial_order_one_keeps_the_straight_benchmark():
+    straight, explicit = BenchmarkCfg(n_per_set=4), BenchmarkCfg.with_spatial_order(1, n_per_set=4)
+    assert straight == explicit
+    with pytest.raises(ValueError):
+        BenchmarkCfg.with_spatial_order(0)

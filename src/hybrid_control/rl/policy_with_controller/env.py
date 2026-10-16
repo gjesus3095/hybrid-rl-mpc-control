@@ -76,7 +76,7 @@ class StabilizationEnvCfg:
     decimation: int = 4  # physics steps per policy step (120 Hz physics -> 30 Hz policy)
     ik_every: int = 2  # physics steps per QP update (-> 60 Hz); must divide ``decimation``
     episode_length_s: float = 5.0  # = the trajectory duration (blend / spawn -> A -> B)
-    max_base_speed: tuple[float, float, float] = (0.5, 0.5, 0.6)  # |vx|, |vy| [m/s], |wz| [rad/s] at action = +-1
+    max_base_speed: tuple[float, float, float] = (1.0, 1.0, 0.6)  # |vx|, |vy| [m/s], |wz| [rad/s] at action = +-1
     terminate_on_left_footprint: bool = True  # also end the episode when the COM leaves the footprint
     domain_randomization: DomainRandomization = field(default_factory=DomainRandomization)
     trajectory: TrajectoryCfg = field(default_factory=TrajectoryCfg)
@@ -207,6 +207,7 @@ class BaseStabilizationEnv(VecEnv):
         log["Metrics/ee_ori_error"] = ori_err.mean()
         log["Metrics/ik_failures_total"] = float(self.ik_failures)
         log["Curriculum/difficulty"] = float(self.traj.cfg.difficulty)
+        log["Trajectory/spatial_order"] = float(self.traj.cfg.spatial_order)
 
         self.extras = {"time_outs": timeouts.float(), "failed": failed & dones, "log": log}
         self._obs = self._compute_obs()
@@ -220,10 +221,7 @@ class BaseStabilizationEnv(VecEnv):
         ``kinds`` forces the reference trajectory kinds (see ``ReferenceTrajectories.reset``)."""
         env, dr = self.env, self.scfg.domain_randomization
         env.reset(ids, dynamics=dynamics or [dr.sample(self.rng) for _ in range(len(ids))])
-        for i in ids.tolist():
-            p = env.params[i]
-            self.param_vec[i, :5] = torch.tensor([*p.footprint, p.base_mass, p.base_com_z, p.payload])
-        self.param_vec[ids, 5] = env.mass_total[ids]
+        self._refresh_param_vec(ids)
         self.arm.refresh()
         ids_np = ids.cpu().numpy()
         ee_quat = torch.as_tensor(self.arm.ee_quat[ids_np], dtype=torch.float32, device=self.device)
@@ -238,6 +236,19 @@ class BaseStabilizationEnv(VecEnv):
         for total in self._ep_sums.values():
             total[ids] = 0.0
         self.pool.v["reset"][ids_np] = 1.0  # stateful controllers (impedance warm start, posture) start over
+
+    def _refresh_param_vec(self, ids: torch.Tensor):
+        env = self.env
+        for i in ids.tolist():
+            p = env.params[i]
+            self.param_vec[i, :5] = torch.tensor([*p.footprint, p.base_mass, p.base_com_z, p.payload])
+        self.param_vec[ids, 5] = env.mass_total[ids]
+
+    def set_payload(self, ids: torch.Tensor, payloads: list[float]):
+        """Change the TCP payload [kg] of ``ids`` mid-episode (no reset); the policy sees it in its physical params."""
+        self.env.set_payload(ids, payloads)
+        self._refresh_param_vec(ids)
+        self._obs = self._compute_obs()
 
     # ------------------------------------------------------------------------------------------
     # Arm QP
@@ -449,7 +460,8 @@ class BaseStabilizationEnv(VecEnv):
             [4, "  fixed / sine", f"difficulty {tr.difficulty:g}, amplitude {self._fmt(tr.amplitude)} m, "
                                 f"frequency {self._fmt(tr.frequency)} Hz, orientation <= {tr.ori_amplitude_deg:g} deg per axis "
                                 f"about a down centre, blend {tr.blend_time:g} s"],
-            [5, "  quintic spawn -> A -> B", f"segments {self._fmt(tr.segment_time)} s, |xy| >= {tr.inner_radius_xy:g} m, |p| <= {tr.outer_radius:g} m "
+            [5, "  quintic spawn -> A -> B", f"segments {self._fmt(tr.segment_time)} s, Bezier order {tr.spatial_order} (deviation <= {tr.curve_deviation:g} m, "
+                                            f"{2 ** tr.hull_splits} hull pieces), |xy| >= {tr.inner_radius_xy:g} m, |p| <= {tr.outer_radius:g} m "
                                             f"from {self._fmt(tr.arm_base)}, z >= {tr.quintic_min_z:g} m, "
                                             f"tilt <= {tr.tilt_max_deg:g} deg, yaw {tr.yaw_centre_deg:g} +- {tr.yaw_range_deg:g} deg"],
         ]

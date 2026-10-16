@@ -10,7 +10,7 @@
 
 ## 🎮 Actions
 
-- **`base_velocity`** (3): vx, vy, wz, scaled to ±0.5 m/s, ±0.5 m/s, ±0.6 rad/s. The only thing the policy controls; the arm is handled by the QP.
+- **`base_velocity`** (3): vx, vy, wz, scaled to ±1 m/s, ±1 m/s, ±0.6 rad/s. The only thing the policy controls; the arm is handled by the QP.
 
 ---
 
@@ -42,7 +42,7 @@
 - **`tilt`** · **−1.0** · (roll² + pitch²) / 0.25². Penalizes leaning before it becomes a tip.
 - **`centre`** · **+0.5** · exp(−(max(d − 0.35, 0) / 0.5)²), d = footprint centre to trajectory centre. Stay near the trajectory the arm serves.
 - **`progress`** · **+1.0** · clamp(approach rate of d beyond 0.35 m, −1, 1). Potential-based push toward the trajectory; oscillating earns nothing.
-- **`speed`** · **−0.5** · (base speed / 0.5)². Prefer slow base motion.
+- **`speed`** · **−1.0** · (base speed / 1.0)². Prefer slow base motion.
 - **`spin`** · **−1.0** · (yaw rate / 0.6)². Prevent spinning.
 - **`yaw`** · **−0.3** · clamp(yaw / 0.6, −3, 3)². No reason to turn away from the spawn heading.
 - **`action_rate`** · **−0.3** · ‖aₜ − aₜ₋₁‖². Smooth commands.
@@ -63,7 +63,7 @@
 ## 🎲 Randomization at reset
 
 - **Base mass:** 5.5 to 38 kg
-- **Payload at the TCP:** 0.8 to 3 kg
+- **Payload at the TCP:** 0 to 3 kg
 - **Footprint:** 0.19 to 0.52 m per side, fixed per env at spawn
 - **Reference trajectory:** new fixed point (20%), Lissajous path at 0.1 to 0.45 Hz with an orientation oscillating up to 20° per axis about a down-pointing centre (40%), or quintic pose path spawn → A → B with the TCP pointing down (40%)
 

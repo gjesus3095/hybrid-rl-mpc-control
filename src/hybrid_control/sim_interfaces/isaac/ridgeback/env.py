@@ -18,6 +18,7 @@ base; the base commands are ignored.
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import torch
 
@@ -44,6 +45,7 @@ class RidgebackDREnv:
         tau: float = 0.15,
         max_force: float = 1000.0,
         fixed_base: bool = False,
+        light_intensity: float = 3000.0,
     ):
         self.sim, self.params = sim, list(params)
         self.fixed_base = fixed_base
@@ -54,7 +56,7 @@ class RidgebackDREnv:
 
         ground = sim_utils.GroundPlaneCfg()
         ground.func("/World/defaultGroundPlane", ground)
-        light = sim_utils.DistantLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75))
+        light = sim_utils.DistantLightCfg(intensity=light_intensity, color=(0.75, 0.75, 0.75))
         light.func("/World/Light", light)
 
         cols = num_cols or math.ceil(math.sqrt(self.num_envs))
@@ -141,6 +143,15 @@ class RidgebackDREnv:
             self.tipped[ids] = False
             self.left_footprint[ids] = False
         self._update_state()
+
+    def set_payload(self, env_ids: torch.Tensor, payloads: list[float]):
+        """Change the TCP payload [kg] of ``env_ids`` mid-episode (``payloads[k]`` for ``env_ids[k]``); the robot state
+        and the other parameters are untouched."""
+        ids = env_ids.to(self.robot.device).long()
+        for i, payload in zip(ids.tolist(), payloads):
+            self.params[i] = replace(self.params[i], payload=float(payload))
+        self.mass_model.set_params([self.params[i] for i in ids.tolist()], env_ids=ids)
+        self._refresh_mass_cache(ids)
 
     def gravity_compensation(self) -> torch.Tensor:
         """(N, 7) arm joint torques that hold the arm against gravity in its current configuration and base tilt."""

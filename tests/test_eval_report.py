@@ -58,3 +58,24 @@ def test_table_has_a_row_per_metric_and_a_column_per_entry():
     assert len(table) == 2 + len(ROWS)
     assert table[0].count("|") == 4 and all(line.count("|") == 4 for line in table)
     assert "failure rate [%]" in "\n".join(table)
+
+
+def _write_run(folder, seed):
+    folder.mkdir(parents=True)
+    part = fake_part(seed)
+    np.savez(folder / "fixed.npz", **{k: part[k] for k in (*LOG_FIELDS, "valid", "fail_step", "n_steps")}, dt=DT)
+    meta = {"name": "run", "checkpoint": None, "controller": "impedance", "benchmark_fingerprint": "abc", "benchmark_seed": 1,
+            "scenarios_per_set": 6, "git": "x", "date": "d", "fixed_base": False}
+    (folder / "summary.json").write_text(json.dumps({"meta": meta, "sets": {"fixed": {"ik_failures": 2}}}))
+
+
+def test_report_of_a_run_with_and_without_payload_folders(tmp_path):
+    from hybrid_control.rl.evaluation.report import build_report
+
+    _write_run(tmp_path / "plain", 0)  # every scenario with its own payload: logs in the run folder
+    plain = build_report(tmp_path / "plain")
+    assert "## 1. All scenarios" in plain and "own payload" in plain and "Extra mass" not in plain
+    for kg in (0, 3):
+        _write_run(tmp_path / "payloads" / f"payload_{kg}kg", kg)
+    payloads = build_report(tmp_path / "payloads")
+    assert "## 2. Extra mass 0 kg" in payloads and "## 3. Extra mass 3 kg" in payloads

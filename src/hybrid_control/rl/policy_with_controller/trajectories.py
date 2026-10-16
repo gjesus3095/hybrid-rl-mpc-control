@@ -7,12 +7,16 @@ Each episode, every env draws one of three kinds (probabilities ``p_fixed``, ``p
   with the orientation oscillating the same way about a down-pointing centre orientation (drawn like quintic A/B):
   ``q(t) = exp(theta(t)) q_centre`` with ``theta_i(t) = ori_amplitude_i * sin(2 pi ori_freq_i t + ori_phase_i)`` about
   the world x, y, z axes (own amplitudes, frequencies and phases).
-- ``QUINTIC``: rest-to-rest quintic pose segments spawn pose -> A -> B (``segment_time``), then B is held. Position
-  moves along the straight segment between two poses and orientation rotates about the fixed world axis of their
-  relative rotation, as in the MuJoCo ``QuinticTrajectory`` (``hybrid_control.utils.trajectories``).
+- ``QUINTIC``: rest-to-rest quintic pose segments spawn pose -> A -> B (``segment_time``), then B is held. The quintic
+  is the time scaling s(t); in space each segment is a Bezier curve of order ``spatial_order`` from its start to its
+  end (order 1 = the straight segment), with interior control points drawn around the straight line. Orientation
+  rotates about the fixed world axis of the segment's relative rotation, as in the MuJoCo ``QuinticTrajectory``
+  (``hybrid_control.utils.trajectories``).
 
-Fixed points and sines are blended in from the end-effector's initial pose over ``blend_time`` (smoothstep; the
-orientation along the shortest rotation), so the arm is not asked to jump at the start. Fixed points hold the
+Fixed points and sines are blended in from the end-effector's initial pose over ``blend_time`` (= the first segment,
+``segment_time[0]``) with the quintic
+s(t) (the orientation along the shortest rotation): the reference starts at rest with zero acceleration and joins the
+sine with continuous velocity and acceleration, so the arm is not asked to jump at the start. Fixed points hold the
 end-effector orientation at reset. Every kind lasts
 ``duration`` (= the sum of ``segment_time``); later times, e.g. lookahead points past the end, hold the final pose. Positions are env-local
 world coordinates (origin = the env origin, where the base spawns). The trajectories are fixed in the world: they
@@ -26,9 +30,13 @@ next one for that env.
 Quintic poses A and B are drawn uniformly from the ball of radius ``outer_radius`` around the arm base
 (``panda_link0`` at spawn), outside the vertical cylinder of radius ``inner_radius_xy`` around the arm base's z axis
 (a circle in x-y) and above ``base_height + height_clearance``, with the TCP pointing down up to ``tilt_max_deg`` and a
-random yaw about the TCP axis. Because each segment is a straight line, both segments are checked exactly: the outer
-ball and the height limit are convex (checking the endpoints is enough) and the cylinder is checked with the point of
-the segment's x-y projection closest to the axis. Quaternion signs are aligned along spawn -> A -> B, so the
+random yaw about the TCP axis. A straight segment (order 1) is checked exactly: the outer ball and the height limit
+are convex (checking the endpoints is enough) and the cylinder is checked with the point of the segment's x-y
+projection closest to the axis. A Bezier curve lies in the convex hull of its control points, so higher orders are
+checked on control points: the curve is split into ``2 ** hull_splits`` pieces (de Casteljau), every piece's control
+points must lie in the ball and above the height limit, and every piece needs a separating line in x-y (a direction u
+with u . (P_i - axis) >= ``inner_radius_xy`` for all its control points). The checks are conservative: they never
+accept a curve that leaves the region. Quaternion signs are aligned along spawn -> A -> B, so the
 reference quaternion is continuous across the segment boundary. A failing segment is redrawn (A until spawn -> A is
 valid, then B until A -> B is valid), so every quintic env gets a valid trajectory.
 """
@@ -62,12 +70,11 @@ class TrajectoryCfg:
     min_radius: float = 0.30  # min distance from the shoulder, keeps the target clear of the robot's body [m]
     min_z: float = 0.35  # min height, above the platform top (0.28 m) [m]
     azimuth_deg: float = 150.0  # centre direction: +-azimuth around the forward (+x) axis; 180 = all around
-    elevation_deg: tuple[float, float] = (-35.0, 50.0)
+    elevation_deg: tuple[float, float] = (-35.0, 30.0)  # higher targets are out of reach with the TCP pointing down
     reach_bias: float = 1.3  # > 1 draws the centre distance toward ``reach`` (extended arm, the hard cases)
     amplitude: tuple[float, float, float] = (0.28, 0.28, 0.18)  # max half-extent per axis at difficulty 1 [m]
     frequency: tuple[float, float] = (0.10, 0.45)  # [Hz]; the top end is reached at difficulty 1 (also orientation)
     ori_amplitude_deg: float = 20.0  # max sine orientation amplitude per world axis at difficulty 1 [deg]
-    blend_time: float = 1.5  # [s] smoothstep from the initial end-effector position onto the reference
     difficulty: float = 1.0
     # --- quintic spawn -> A -> B ---
     arm_base: tuple[float, float, float] = (0.30, 0.0, 0.28)  # panda_link0 at spawn: (MOUNT_X, 0, STOCK_HEIGHT) [m]
@@ -77,13 +84,24 @@ class TrajectoryCfg:
     height_clearance: float = 0.10  # every point stays this far above the base height [m]
     segment_time: tuple[float, float] = (2.5, 2.5)  # [s] durations of spawn -> A and A -> B
     max_draws: int = 1000  # rejection rounds before giving up with an error (only for an impossible config/spawn)
+    spatial_order: int = 1  # Bezier order of each segment's path (1 = straight line)
+    curve_deviation: float = 0.15  # interior control points: straight-line position + offset within this radius [m]
+    hull_splits: int = 3  # de Casteljau halvings for the control-point checks (2 ** hull_splits pieces)
+    hull_directions: int = 32  # candidate x-y directions of the separating-line test (+ the mean direction)
     tilt_max_deg: float = 30.0  # max angle between the TCP z axis and straight down
+    pitch_deg: float = 0.0  # fixed tilt of the TCP z axis from straight down toward +x before the random tilt (90 = forward)
     yaw_centre_deg: float = 0.0  # yaw about the TCP z axis, relative to Q_DOWN ...
     yaw_range_deg: float = 90.0  # ... drawn uniformly in yaw_centre +- yaw_range
 
     @property
     def quintic_min_z(self) -> float:
         return self.base_height + self.height_clearance
+
+    @property
+    def blend_time(self) -> float:
+        """[s] blend of fixed points and sines from the initial end-effector pose onto the reference: the first segment
+        (``segment_time[0]``), so every kind has the same two phases."""
+        return float(self.segment_time[0])
 
     @property
     def duration(self) -> float:
@@ -101,10 +119,38 @@ def quintic_time_scaling(t: torch.Tensor, duration: torch.Tensor | float):
     return s, ds, dds
 
 
+def bezier_eval(points: torch.Tensor, s: torch.Tensor) -> torch.Tensor:
+    """Bezier curves with control points ``points`` (..., n+1, 3) at parameters ``s`` (..., K) in [0, 1] -> (..., K, 3)."""
+    n = points.shape[-2] - 1
+    i = torch.arange(n + 1, device=points.device, dtype=points.dtype)
+    binom = torch.tensor([math.comb(n, k) for k in range(n + 1)], device=points.device, dtype=points.dtype)
+    s = s[..., None]
+    return (binom * s**i * (1 - s) ** (n - i)) @ points  # Bernstein weights (..., K, n+1)
+
+
+def bezier_halve(points: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Control points (..., n+1, 3) of the two halves u in [0, 1/2] and [1/2, 1] (de Casteljau at 1/2)."""
+    left, right, q = [points[..., 0, :]], [points[..., -1, :]], points
+    while q.shape[-2] > 1:
+        q = 0.5 * (q[..., :-1, :] + q[..., 1:, :])
+        left.append(q[..., 0, :])
+        right.append(q[..., -1, :])
+    return torch.stack(left, dim=-2), torch.stack(right[::-1], dim=-2)
+
+
+def bezier_pieces(points: torch.Tensor, splits: int) -> torch.Tensor:
+    """(m, n+1, 3) control points -> (m, 2 ** splits, n+1, 3): the curve cut into equal parameter pieces, in order."""
+    pieces = points[:, None]
+    for _ in range(splits):
+        left, right = bezier_halve(pieces)
+        pieces = torch.stack([left, right], dim=2).flatten(1, 2)
+    return pieces
+
+
 class ReferenceTrajectories:
     # per-env state tensors (e.g. to copy a scenario from one env to another)
     STATE = ("kind", "centre", "amplitude", "frequency", "phase", "start", "start_quat", "centre_quat", "ori_amplitude",
-             "ori_frequency", "ori_phase", "waypoints", "waypoint_quat", "segment_rotvec")
+             "ori_frequency", "ori_phase", "waypoints", "waypoint_quat", "segment_rotvec", "control_points")
 
     def __init__(self, num_envs: int, device: str | torch.device, cfg: TrajectoryCfg | None = None):
         self.cfg, self.device, self.num_envs = cfg or TrajectoryCfg(), device, num_envs
@@ -117,6 +163,7 @@ class ReferenceTrajectories:
         self.waypoint_quat = z(num_envs, 3, 4)  # spawn, A, B orientations (xyzw)
         self.waypoint_quat[..., 3] = 1.0
         self.segment_rotvec = z(num_envs, 2, 3)  # world-frame rotation vector of each segment
+        self.control_points = z(num_envs, 2, self.cfg.spatial_order + 1, 3)  # Bezier control points of each segment
         self.centre_quat = z(num_envs, 4)  # sine orientation centre (= start_quat for the other kinds)
         self.centre_quat[:, 3] = 1.0
         self.ori_amplitude, self.ori_frequency, self.ori_phase = z(num_envs, 3), z(num_envs, 3), z(num_envs, 3)
@@ -185,6 +232,26 @@ class ReferenceTrajectories:
         high = (p0[:, 2] >= c.quintic_min_z) & (p1[:, 2] >= c.quintic_min_z)
         return inner & outer & high
 
+    def curve_valid(self, points: torch.Tensor) -> torch.Tensor:
+        """(m,) bool: whether the Bezier curves with control points ``points`` (m, n+1, 3) stay inside the outer ball,
+        outside the cylinder and above ``quintic_min_z`` (see the module docstring). Exact for straight segments,
+        conservative (never accepts a curve that leaves the region) for higher orders."""
+        if points.shape[1] == 2:
+            return self.segment_valid(points[:, 0], points[:, 1])
+        c = self.cfg
+        centre = torch.tensor(c.arm_base, device=points.device)
+        pieces = bezier_pieces(points, c.hull_splits)  # (m, M, n+1, 3)
+        outer = ((pieces - centre).norm(dim=-1) <= c.outer_radius).flatten(1).all(1)
+        high = (pieces[..., 2] >= c.quintic_min_z).flatten(1).all(1)
+        rel = pieces[..., :2] - centre[:2]  # (m, M, n+1, 2)
+        angles = torch.arange(c.hull_directions, device=points.device) * (2 * math.pi / c.hull_directions)
+        fixed = torch.stack([torch.cos(angles), torch.sin(angles)], -1).expand(*rel.shape[:2], -1, -1)
+        mean = rel.mean(dim=2, keepdim=True)
+        directions = torch.cat([fixed, mean / mean.norm(dim=-1, keepdim=True).clamp_min(1e-9)], dim=2)  # (m, M, D, 2)
+        margin = (directions @ rel.transpose(-1, -2)).min(dim=-1).values  # (m, M, D): min over control points
+        inner = (margin.max(dim=-1).values >= c.inner_radius_xy).all(1)  # some separating direction for every piece
+        return inner & outer & high
+
     def _sample_point(self, n: int) -> torch.Tensor:
         """(n, 3) points uniform in the ball around ``arm_base``, outside the ``inner_radius_xy`` cylinder and above
         ``quintic_min_z`` (rejection sampling)."""
@@ -216,28 +283,45 @@ class ReferenceTrajectories:
         q_tilt = quat_from_rotvec(torch.stack([tilt * torch.cos(axis), tilt * torch.sin(axis), z], -1))
         q_yaw = quat_from_rotvec(torch.stack([z, z, yaw], -1))
         q_down = torch.tensor(Q_DOWN, device=self.device).expand(n, 4)
+        # about the TCP y axis, which is world -y in Q_DOWN, so a positive pitch turns the TCP z axis toward +x
+        q_pitch = quat_from_rotvec(torch.tensor([0.0, math.radians(c.pitch_deg), 0.0], device=self.device).expand(n, 3))
+        q_down = quat_mul(q_down, q_pitch)
         return quat_mul(quat_mul(q_down, q_tilt), q_yaw)  # body-frame rotations: the yaw keeps the tilted z axis
 
-    def _sample_endpoints(self, p0: torch.Tensor) -> torch.Tensor:
-        """(m, 3) endpoints p1 such that every segment p0 -> p1 is valid; failing segments are redrawn."""
-        p1 = torch.zeros_like(p0)
-        pending = torch.ones(len(p0), dtype=torch.bool, device=self.device)
-        for _ in range(self.cfg.max_draws):
+    def _sample_curve(self, p0: torch.Tensor) -> torch.Tensor:
+        """(m, n+1, 3) Bezier control points of valid curves from ``p0`` (m, 3) to a random end point; interior control
+        point k sits at the straight-line position k/n plus an offset within ``curve_deviation``. Failing curves are
+        redrawn (end point and interior points)."""
+        c, m = self.cfg, len(p0)
+        n = c.spatial_order
+        out = torch.zeros(m, n + 1, 3, device=self.device)
+        frac = torch.arange(n + 1, device=self.device, dtype=torch.float32)[None, :, None] / n  # (1, n+1, 1)
+        pending = torch.ones(m, dtype=torch.bool, device=self.device)
+        for _ in range(c.max_draws):
             idx = pending.nonzero(as_tuple=False).flatten()
             if not len(idx):
-                return p1
-            cand = self._sample_point(len(idx))
-            ok = self.segment_valid(p0[idx], cand)
-            p1[idx[ok]] = cand[ok]
+                return out
+            p_end = self._sample_point(len(idx))
+            cand = p0[idx, None] + frac * (p_end - p0[idx])[:, None]
+            if n > 1:  # offsets uniform in a ball, interior points only
+                offset = torch.randn(len(idx), n - 1, 3, device=self.device)
+                offset = offset / offset.norm(dim=-1, keepdim=True).clamp_min(1e-9)
+                offset = offset * c.curve_deviation * torch.rand(len(idx), n - 1, 1, device=self.device) ** (1.0 / 3.0)
+                cand[:, 1:-1] = cand[:, 1:-1] + offset
+            ok = self.curve_valid(cand)
+            out[idx[ok]] = cand[ok]
             pending[idx[ok]] = False
         raise RuntimeError(f"no valid quintic segment from {p0[pending][:3].tolist()} after {self.cfg.max_draws} "
                            "draws: the start lies outside the shell or below quintic_min_z (check the spawn pose / TrajectoryCfg)")
 
     def _sample_quintic(self, start: torch.Tensor, start_quat: torch.Tensor):
-        """Waypoints (m, 3, 3) spawn, A, B with valid segments and their orientations (m, 3, 4)."""
+        """Waypoints (m, 3, 3) spawn, A, B, their orientations (m, 3, 4) and the control points (m, 2, n+1, 3) of the
+        valid curves spawn -> A and A -> B."""
         m = len(start)
-        a = self._sample_endpoints(start)
-        b = self._sample_endpoints(a)
+        curve_a = self._sample_curve(start)
+        a = curve_a[:, -1]
+        curve_b = self._sample_curve(a)
+        b = curve_b[:, -1]
         quats = torch.cat([start_quat[:, None], self._sample_quat(2 * m).reshape(m, 2, 4)], dim=1)
         # q and -q are the same rotation. Flip A to the hemisphere of the spawn quaternion and B to that of A: then
         # exp(rotvec(q1 q0^-1)) q0 = q1 exactly (the shortest-rotation rotvec needs a non-negative scalar part
@@ -245,7 +329,7 @@ class ReferenceTrajectories:
         for k in (1, 2):
             sign = torch.where((quats[:, k] * quats[:, k - 1]).sum(-1, keepdim=True) < 0, -1.0, 1.0)
             quats[:, k] = sign * quats[:, k]
-        return torch.stack([start, a, b], dim=1), quats
+        return torch.stack([start, a, b], dim=1), quats, torch.stack([curve_a, curve_b], dim=1)
 
     # ------------------------------------------------------------------------------------------
     def reset(self, env_ids: torch.Tensor, start: torch.Tensor, start_quat: torch.Tensor | None = None,
@@ -267,10 +351,11 @@ class ReferenceTrajectories:
         centre, amp, freq, phase = self._sample_sine(kind == SINE)
         points = start[:, None].repeat(1, 3, 1)
         quats = start_quat[:, None].repeat(1, 3, 1)
+        control = start[:, None, None].repeat(1, 2, c.spatial_order + 1, 1)
         q_idx = (kind == QUINTIC).nonzero(as_tuple=False).flatten()
         if len(q_idx):
-            q_points, q_quats = self._sample_quintic(start[q_idx], start_quat[q_idx])
-            points[q_idx], quats[q_idx] = q_points, q_quats
+            q_points, q_quats, q_control = self._sample_quintic(start[q_idx], start_quat[q_idx])
+            points[q_idx], quats[q_idx], control[q_idx] = q_points, q_quats, q_control
             centre[q_idx] = 0.5 * (q_points[:, 1] + q_points[:, 2])  # centre of the A -> B segment
             amp[q_idx] = 0.0
         rotvec = quat_to_rotvec(quat_mul(quats[:, 1:], quat_conj(quats[:, :-1])))  # q_goal q_start^-1, shortest
@@ -293,6 +378,7 @@ class ReferenceTrajectories:
         self.frequency[env_ids], self.phase[env_ids] = freq, phase
         self.start[env_ids], self.start_quat[env_ids] = start, start_quat
         self.waypoints[env_ids], self.waypoint_quat[env_ids], self.segment_rotvec[env_ids] = points, quats, rotvec
+        self.control_points[env_ids] = control
         self.centre_quat[env_ids], self.ori_amplitude[env_ids] = centre_quat, ori_amp
         self.ori_frequency[env_ids], self.ori_phase[env_ids] = ori_freq, ori_phase
 
@@ -340,8 +426,7 @@ class ReferenceTrajectories:
             2 * math.pi * self.ori_frequency[:, None] * tt[..., None] + self.ori_phase[:, None]
         )
         raw_quat = quat_mul(quat_from_rotvec(theta), self.centre_quat[:, None].expand(-1, tt.shape[1], -1))
-        s = (tt / max(self.cfg.blend_time, 1e-6)).clamp(0.0, 1.0)
-        s = (s * s * (3.0 - 2.0 * s))[..., None]
+        s = quintic_time_scaling(tt, max(self.cfg.blend_time, 1e-6))[0][..., None]  # s' = s'' = 0 at both ends
         pos = (1.0 - s) * self.start[:, None] + s * raw
         start_quat = self.start_quat[:, None].expand_as(raw_quat)
         blend = quat_to_rotvec(quat_mul(raw_quat, quat_conj(start_quat)))  # shortest rotation start -> raw
@@ -353,11 +438,11 @@ class ReferenceTrajectories:
             first = (tt < t0)[..., None]  # (N, K, 1)
             s, _, _ = quintic_time_scaling(torch.where(first[..., 0], tt, tt - t0), torch.where(first[..., 0], t0, t1))
             s = s[..., None]
-            p0 = torch.where(first, self.waypoints[:, None, 0], self.waypoints[:, None, 1])
-            p1 = torch.where(first, self.waypoints[:, None, 1], self.waypoints[:, None, 2])
+            cp = self.control_points
+            control = torch.where(first[..., None], cp[:, None, 0], cp[:, None, 1])  # (N, K, n+1, 3)
             q0 = torch.where(first, self.waypoint_quat[:, None, 0], self.waypoint_quat[:, None, 1])
             r = torch.where(first, self.segment_rotvec[:, None, 0], self.segment_rotvec[:, None, 1])
-            q_pos = p0 + s * (p1 - p0)
+            q_pos = bezier_eval(control, s)[..., 0, :]  # s (N, K, 1): one parameter per curve
             q_quat = quat_mul(quat_from_rotvec(s * r), q0)
             sel = quintic[:, None, None]
             pos, quat = torch.where(sel, q_pos, pos), torch.where(sel, q_quat, quat)

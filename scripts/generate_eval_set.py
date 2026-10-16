@@ -2,6 +2,7 @@
 
     python scripts/generate_eval_set.py                 # prints the fingerprint and per-set statistics
     python scripts/generate_eval_set.py --save out/eval/benchmark.npz --plot out/eval/benchmark.png
+    python scripts/generate_eval_set.py --spatial_order 3     # poly / poly_far along cubic Bezier paths
 
 The same seed always gives the same benchmark (same fingerprint). ``scripts/isaac/evaluate_policy.py`` regenerates it in
 memory by default, so saving is only needed to share or archive the exact scenarios (about 6 MB).
@@ -18,12 +19,16 @@ parser = argparse.ArgumentParser(description="Generate the deterministic evaluat
 parser.add_argument("--seed", type=int, default=BenchmarkCfg.seed)
 parser.add_argument("--controller", choices=sorted(SPAWN_POSES), default="ik_qp", help="Arm controller (fixes the TCP spawn pose).")
 parser.add_argument("--n_per_set", type=int, default=BenchmarkCfg.n_per_set)
+parser.add_argument("--spatial_order", type=int, default=BenchmarkCfg().trajectory.spatial_order,
+                    help="Bezier order of the poly / poly_far paths under the quintic time scaling (1 = straight segments).")
 parser.add_argument("--save", type=str, default=None, help="Write the benchmark to this .npz.")
 parser.add_argument("--plot", type=str, default=None, help="Write a top-view / side-view overview to this .png.")
 args = parser.parse_args()
 
-benchmark = generate_benchmark(BenchmarkCfg(seed=args.seed, n_per_set=args.n_per_set, controller=args.controller))
-print(f"benchmark fingerprint {benchmark.fingerprint()} (seed {args.seed}, {args.controller} spawn pose, {args.n_per_set} scenarios per set)")
+benchmark = generate_benchmark(BenchmarkCfg.with_spatial_order(args.spatial_order, seed=args.seed, n_per_set=args.n_per_set,
+                                                               controller=args.controller))
+print(f"benchmark fingerprint {benchmark.fingerprint()} (seed {args.seed}, {args.controller} spawn pose, {args.n_per_set} scenarios "
+      f"per set, poly paths of Bezier order {args.spatial_order})")
 arm_base = np.array(benchmark.cfg.trajectory.arm_base)
 print(f"{'set':9s} {'duration [s]':>22s} {'max |p-arm base|_xy [m]':>24s} {'peak speed [m/s]':>18s}")
 for name in SET_NAMES:

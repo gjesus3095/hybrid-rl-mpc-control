@@ -1,0 +1,150 @@
+{
+  "meta": {
+    "name": "impedance_quintic_run1_model_1250_order3",
+    "checkpoint": "/home/u0110021/hybrid-rl-mpc-control/logs/base_policy/impedance_quintic_run1/model_1250.pt",
+    "zero_policy": false,
+    "fixed_base": false,
+    "controller": "impedance",
+    "payload_kg": null,
+    "benchmark_seed": 2026,
+    "scenarios_per_set": 100,
+    "spatial_order": 3,
+    "max_base_speed": [
+      0.5,
+      0.5,
+      0.6
+    ],
+    "policy_dt": 0.03333333333333333,
+    "git": "81a69b9+dirty",
+    "date": "2026-10-16T10:40:12",
+    "benchmark_fingerprint": "67e2e1d5f243",
+    "set_fingerprints": {
+      "poly": "cdd8f6615b25",
+      "poly_far": "e3fab98368ed"
+    }
+  },
+  "sets": {
+    "poly": {
+      "scenarios": 100,
+      "failed": 1,
+      "failure_rate": 0.01,
+      "failure_time_s": 2.8666666666666667,
+      "tipped": 1,
+      "left_footprint": 1,
+      "would_fail": 1,
+      "pos_err_m": {
+        "rms": 0.03693078085780144,
+        "mean": 0.027605246752500534,
+        "std": 0.02453228272497654,
+        "p95": 0.07412753254175186,
+        "max": 0.22024910151958466,
+        "completed_rms": 0.03633519262075424,
+        "per_scenario_rms": {
+          "mean": 0.032343950951471925,
+          "std": 0.01869218442635418,
+          "median": 0.028684920631349087,
+          "max": 0.11941587924957275
+        }
+      },
+      "ori_err_rad": {
+        "rms": 0.04915860295295715,
+        "mean": 0.0371512733399868,
+        "std": 0.0321924090385437,
+        "p95": 0.10187522321939468,
+        "max": 0.23747189342975616,
+        "completed_rms": 0.04890865460038185,
+        "per_scenario_rms": {
+          "mean": 0.04600171568803489,
+          "std": 0.0178378023489264,
+          "median": 0.04202623292803764,
+          "max": 0.10393969714641571
+        }
+      },
+      "final_pos_err_m": {
+        "mean": 0.03099776990711689,
+        "max": 0.19984252750873566
+      },
+      "com_margin_m": {
+        "mean": 0.0995868518948555,
+        "std": 0.03795921057462692,
+        "min": -0.0005400776863098145,
+        "per_scenario_min_mean": 0.07801308482885361,
+        "per_scenario_min_p5": 0.04022005945444107
+      },
+      "com_rho": {
+        "mean": 0.2377052903175354,
+        "std": 0.12704549729824066,
+        "max": 1.005031704902649
+      },
+      "base": {
+        "speed_mean_mps": 0.1636902242898941,
+        "speed_max_mps": 0.6843129396438599,
+        "yaw_rate_abs_mean": 0.19435206055641174,
+        "max_tilt_rad": 0.08375799655914307,
+        "max_distance_from_spawn_m": 1.352616310119629
+      },
+      "ik_failures": 1
+    },
+    "poly_far": {
+      "scenarios": 100,
+      "failed": 1,
+      "failure_rate": 0.01,
+      "failure_time_s": 9.266666666666666,
+      "tipped": 1,
+      "left_footprint": 1,
+      "would_fail": 1,
+      "pos_err_m": {
+        "rms": 0.033833276480436325,
+        "mean": 0.022684812545776367,
+        "std": 0.025101590901613235,
+        "p95": 0.06992743909358978,
+        "max": 0.3380046486854553,
+        "completed_rms": 0.03227739781141281,
+        "per_scenario_rms": {
+          "mean": 0.0276591359032318,
+          "std": 0.020098513947604195,
+          "median": 0.02200203388929367,
+          "max": 0.10665110498666763
+        }
+      },
+      "ori_err_rad": {
+        "rms": 0.03741280734539032,
+        "mean": 0.026306746527552605,
+        "std": 0.02660212852060795,
+        "p95": 0.07720425724983215,
+        "max": 0.2725411057472229,
+        "completed_rms": 0.03712545335292816,
+        "per_scenario_rms": {
+          "mean": 0.03440678616054356,
+          "std": 0.0159928984881286,
+          "median": 0.0330938994884491,
+          "max": 0.07178626954555511
+        }
+      },
+      "final_pos_err_m": {
+        "mean": 0.021227631717920303,
+        "max": 0.12910009920597076
+      },
+      "com_margin_m": {
+        "mean": 0.09643000364303589,
+        "std": 0.036576636135578156,
+        "min": -0.007252536714076996,
+        "per_scenario_min_mean": 0.0742984265089035,
+        "per_scenario_min_p5": 0.040709029883146286
+      },
+      "com_rho": {
+        "mean": 0.26804837584495544,
+        "std": 0.12836569547653198,
+        "max": 1.0728082656860352
+      },
+      "base": {
+        "speed_mean_mps": 0.18800614774227142,
+        "speed_max_mps": 0.5113731026649475,
+        "yaw_rate_abs_mean": 0.15598586201667786,
+        "max_tilt_rad": 0.20589680969715118,
+        "max_distance_from_spawn_m": 2.410027265548706
+      },
+      "ik_failures": 1
+    }
+  }
+}
