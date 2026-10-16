@@ -168,7 +168,8 @@ def build_report(eval_dir: str | Path) -> str:
                 + (f" (checkpoint trained with {trained})" if meta.get("checkpoint") else ""))
     else:
         mass = (f"- extra mass at the gripper: {', '.join(_kg(p) for p in payloads)} (the same {meta['scenarios_per_set']} scenarios "
-                f"per trajectory type each time; only the payload differs). Training used {trained}.")
+                f"per trajectory type each time; only the payload differs)"
+                + (f". Training used {trained}." if meta.get("checkpoint") else ""))
 
     out = [
         f"# Evaluation report: {meta['name']}", "",

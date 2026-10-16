@@ -23,6 +23,7 @@ parser.add_argument("--spatial_order", type=int, default=BenchmarkCfg().trajecto
                     help="Bezier order of the poly / poly_far paths under the quintic time scaling (1 = straight segments).")
 parser.add_argument("--save", type=str, default=None, help="Write the benchmark to this .npz.")
 parser.add_argument("--plot", type=str, default=None, help="Write a top-view / side-view overview to this .png.")
+parser.add_argument("--plot_count", type=int, default=25, help="Scenarios per set drawn in the plot (the first N).")
 args = parser.parse_args()
 
 benchmark = generate_benchmark(BenchmarkCfg.with_spatial_order(args.spatial_order, seed=args.seed, n_per_set=args.n_per_set,
@@ -54,12 +55,12 @@ if args.plot:
     theta = np.linspace(0, 2 * np.pi, 200)
     for col, name in enumerate(SET_NAMES):
         pos = benchmark.sets[name].poses[..., :3]
-        for p in pos[:25]:
+        for p in pos[:args.plot_count]:
             axes[0, col].plot(p[:, 0], p[:, 1], lw=0.7)
             axes[1, col].plot(np.linalg.norm(p[:, :2] - arm_base[:2], axis=-1), p[:, 2], lw=0.7)
         for radius, style in ((benchmark.cfg.trajectory.outer_radius, "k--"), (benchmark.cfg.far_max_radius_xy, "k:")):
             axes[0, col].plot(arm_base[0] + radius * np.cos(theta), arm_base[1] + radius * np.sin(theta), style, lw=0.8)
-        axes[0, col].set(title=f"{name} (25 of {len(pos)})", xlabel="x [m]", ylabel="y [m]", aspect="equal")
+        axes[0, col].set(title=f"{name} (first {min(args.plot_count, len(pos))} of {len(pos)})", xlabel="x [m]", ylabel="y [m]", aspect="equal")
         axes[1, col].set(xlabel="x-y distance from the arm base [m]", ylabel="z [m]")
     fig.suptitle("dashed: 0.8 m training reach around the arm base, dotted: 2 m far-B limit")
     fig.tight_layout()
