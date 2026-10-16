@@ -63,12 +63,22 @@ Five sets of 100 scenarios, identical for every policy (`src/hybrid_control/rl/e
 at the training mean speed 0.25 m/s) and `rigid` (constant-speed straight legs, 0 / 1 / 2 rounded 90 degree bends, inside the
 training workspace). Slot `j` has footprint `j` in every set; each scenario has its own mass / payload.
 
+`fixed`, `sine` and `rigid` only contain references that the arm can follow from the spawn pose **with a fixed base**
+(`evaluation/reachability.py`: continuous IK along the timed reference with orientation held, joint limits with a 0.05 rad
+margin and joint speeds below 70 % of the Panda limits; candidates are redrawn until 100 pass). `poly` and `ellipse` were
+checked the same way and pass; `poly_far` is outside the arm's reach on purpose. On a welded base the three filtered sets
+track to 0.1-0.6 cm RMS (zero policy, impedance controller, no payload).
+
 ```bash
 # print the benchmark fingerprint and statistics, plot it (no Isaac needed)
 PYTHONPATH=$R/src python3 $R/scripts/generate_eval_set.py --plot $R/out/eval/benchmark.png
 # play a policy on it (about 10 min); logs + summary.json go to out/eval/<run>_<model>/
 $PY $R/scripts/isaac/evaluate_policy.py --checkpoint $CK --qp_workers 32
 $PY $R/scripts/isaac/evaluate_policy.py --zero_policy --qp_workers 32      # baseline
+# welded base (cannot move or tip, nothing terminates; COM-margin violations are counted as "would have failed")
+$PY $R/scripts/isaac/evaluate_policy.py --zero_policy --fixed_base --controller impedance --qp_workers 32
+# several payloads in one process, one folder per payload; --name sets the output folder out/eval/<name>
+$PY $R/scripts/isaac/evaluate_policy.py --checkpoint $CK --payloads 0 1.5 3 --qp_workers 32 --name <name>
 # smoke test: first 8 scenarios of one set (same scenarios as in the full run)
 $PY $R/scripts/isaac/evaluate_policy.py --checkpoint $CK --sets poly_far --num_scenarios 8 --qp_workers 8
 ```

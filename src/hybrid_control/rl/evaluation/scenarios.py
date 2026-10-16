@@ -1,12 +1,13 @@
-"""Deterministic evaluation benchmark for the base policy (pure torch / numpy, no Isaac imports).
+"""Deterministic evaluation benchmark for the base policy (torch / numpy / pinocchio, no Isaac imports).
 
 ``generate_benchmark(cfg)`` always returns the same scenarios for the same ``BenchmarkCfg`` (every random draw is seeded),
 so different policies can be compared on exactly the same references and dynamics. A scenario is a dense world-frame
 reference pose table (env-local coordinates, sampled at ``REF_DT``) plus the base dynamics it is played with. Five sets of
 ``n_per_set`` scenarios each (slot ``j`` of every set has footprint ``j``, so sets are paired across the same platforms):
 
-- ``fixed``: fixed points, drawn exactly like training (``ReferenceTrajectories``).
-- ``sine``: Lissajous sines at full difficulty, drawn like training.
+- ``fixed``: fixed points, drawn like training (``ReferenceTrajectories``) but only those the arm can follow from the spawn
+  pose with a fixed base (``reachability.ArmReach``: IK along the timed reference, joint limits and speeds).
+- ``sine``: Lissajous sines at full difficulty, drawn like training and filtered for reachability the same way.
 - ``poly``: quintic spawn -> A -> B (2.5 s + 2.5 s), drawn like training.
 - ``poly_far``: generalization. Spawn -> A as in training, then A -> B with B outside the training reach: its x-y distance
   from the arm base is in ``[far_min_radius_xy, far_max_radius_xy]`` (0.9-2.0 m; training stays within 0.8 m of the arm
@@ -16,7 +17,7 @@ reference pose table (env-local coordinates, sampled at ``REF_DT``) plus the bas
 - ``rigid``: straight lines at constant speed (trapezoidal speed ramp at start and end, no quintic) from the spawn pose:
   a third are single straight legs, a third have one 90 degree bend and a third two, with rounded corners
   (``corner_radius``). The TCP orientation is held. The whole path stays inside the training workspace (ball around the
-  arm base, outside the inner cylinder, above the height limit). ``hold_time`` of holding the end is appended.
+  arm base, outside the inner cylinder, above the height limit) and is reachable by a fixed base (``ArmReach``). ``hold_time`` of holding the end is appended.
 
 - ``ellipse``: loops around the arm base axis: ellipses (circles are the equal-axes case) with random semi-axes and
   orientation, centred on the arm base's x-y, whose height oscillates along the loop (``ellipse_z_*``). Even scenarios
@@ -40,6 +41,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from hybrid_control.rl.evaluation.reachability import ArmReach, ReachCfg
 from hybrid_control.rl.policy_with_controller.trajectories import (
     FIXED, QUINTIC, SINE, ReferenceTrajectories, TrajectoryCfg, quintic_time_scaling,
 )
@@ -63,6 +65,7 @@ class BenchmarkCfg:
     controller: str = "ik_qp"  # arm controller the references are for: it fixes the TCP (hence the spawn pose)
     n_per_set: int = 100
     trajectory: TrajectoryCfg = field(default_factory=TrajectoryCfg)  # training sampler for fixed / sine / poly
+    reach: ReachCfg = field(default_factory=ReachCfg)  # fixed, sine and rigid keep only references a fixed base can follow
     # --- poly_far ---
     far_min_radius_xy: float = 0.9  # B is at least this far from the arm base in x-y [m] (> the 0.8 m training ball)
     far_max_radius_xy: float = 2.0  # ... and at most this far [m]
@@ -141,7 +144,8 @@ class Benchmark:
         data = np.load(path, allow_pickle=False)
         meta = json.loads(str(data["meta"]))
         trajectory = TrajectoryCfg(**{k: tuple(v) if isinstance(v, list) else v for k, v in meta.pop("trajectory").items()})
-        cfg = BenchmarkCfg(trajectory=trajectory, **{k: tuple(v) if isinstance(v, list) else v for k, v in meta.items()})
+        reach = ReachCfg(**meta.pop("reach", {}))  # benchmarks saved before the reachability filter have none
+        cfg = BenchmarkCfg(trajectory=trajectory, reach=reach, **{k: tuple(v) if isinstance(v, list) else v for k, v in meta.items()})
         sets = {}
         for name in SET_NAMES:
             if f"{name}/poses" not in data:
@@ -170,20 +174,42 @@ def _poses(pos: np.ndarray, quat: np.ndarray) -> np.ndarray:
 
 
 def _training_set(cfg: BenchmarkCfg, kind: int, seed: int, n: int) -> dict:
-    """fixed / sine / quintic scenarios from the training sampler (global torch RNG, seeded, on the CPU)."""
-    torch.manual_seed(seed)
-    traj = ReferenceTrajectories(n, "cpu", cfg.trajectory)
-    start, start_quat = _spawn(cfg, n)
-    traj.reset(torch.arange(n), start, start_quat, kind=torch.full((n,), kind))
-    t = torch.tensor(_grid(cfg.trajectory.duration), dtype=torch.float32)
-    pos, quat = traj.lookahead_pose(torch.zeros(n), t)
+    """fixed / sine / quintic scenarios from the training sampler (global torch RNG, seeded, on the CPU).
+
+    ``fixed`` and ``sine`` keep only the first ``n`` candidates the arm can follow from the spawn pose with a fixed base
+    (``ArmReach``); the candidates are the training sampler's draws, so this is that distribution conditioned on being
+    reachable. ``poly`` is left as drawn."""
+    reach = None if kind == QUINTIC else ArmReach(cfg.spawn, cfg.trajectory.arm_base, cfg.reach)
+    for factor in (1,) if reach is None else (3, 6, 12, 24):  # more candidates until n of them are reachable
+        m = n * factor
+        torch.manual_seed(seed)
+        traj = ReferenceTrajectories(m, "cpu", cfg.trajectory)
+        start, start_quat = _spawn(cfg, m)
+        traj.reset(torch.arange(m), start, start_quat, kind=torch.full((m,), kind))
+        t = torch.tensor(_grid(cfg.trajectory.duration), dtype=torch.float32)
+        pos, quat = traj.lookahead_pose(torch.zeros(m), t)
+        poses = _poses(pos.numpy(), quat.numpy())
+        if reach is None:
+            keep = np.arange(m)
+            break
+        keep = []
+        for i in range(m):
+            if reach.trajectory_ok(poses[i], REF_DT):
+                keep.append(i)
+                if len(keep) == n:
+                    break
+        if len(keep) == n:
+            keep = np.array(keep)
+            break
+    else:
+        raise RuntimeError(f"fewer than {n} reachable scenarios among {m} candidates; check the TrajectoryCfg / ReachCfg")
     info = {"centre": traj.centre}
     if kind == SINE:
         info.update(amplitude=traj.amplitude, frequency=traj.frequency, phase=traj.phase)
     if kind == QUINTIC:
         info.update(waypoints=traj.waypoints, waypoint_quat=traj.waypoint_quat)
-    return dict(poses=_poses(pos.numpy(), quat.numpy()), duration=np.full(n, cfg.trajectory.duration, np.float32),
-                centre=traj.centre.numpy(), info={k: v.numpy().astype(np.float32) for k, v in info.items()})
+    return dict(poses=poses[keep], duration=np.full(n, cfg.trajectory.duration, np.float32),
+                centre=traj.centre.numpy()[keep], info={k: v.numpy().astype(np.float32)[keep] for k, v in info.items()})
 
 
 def quintic_chain(points: torch.Tensor, quats: torch.Tensor, seg_time: torch.Tensor, t: torch.Tensor):
@@ -321,6 +347,7 @@ def _path_valid(points: np.ndarray, cfg: TrajectoryCfg) -> bool:
 def _rigid_set(cfg: BenchmarkCfg, seed: int, n: int) -> dict:
     rng = np.random.default_rng(seed)
     start = np.array(cfg.spawn[0])
+    reach = ArmReach(cfg.spawn, cfg.trajectory.arm_base, cfg.reach)
     unit = lambda v: v / np.linalg.norm(v)  # noqa: E731
     tables, durations, vertices_all, kinds, speeds = [], [], [], [], []
     for i in range(n):
@@ -335,18 +362,21 @@ def _rigid_set(cfg: BenchmarkCfg, seed: int, n: int) -> dict:
                 vertices.append(vertices[-1] + direction * length)
             vertices = np.array(vertices)
             dense = rounded_polyline(vertices, cfg.corner_radius)
-            if _path_valid(dense, cfg.trajectory):
+            if not _path_valid(dense, cfg.trajectory):
+                continue
+            speed = float(rng.uniform(*cfg.rigid_speed))
+            arc = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(dense, axis=0), axis=-1))])
+            _, motion_time = trapezoid_progress(np.zeros(1), arc[-1], speed, cfg.rigid_accel)
+            duration = motion_time + cfg.hold_time
+            t = _grid(duration)
+            s, _ = trapezoid_progress(t, arc[-1], speed, cfg.rigid_accel)
+            pos = np.stack([np.interp(s, arc, dense[:, k]) for k in range(3)], axis=-1)
+            table = _poses(pos, np.broadcast_to(cfg.spawn[1], (len(t), 4)))
+            if reach.trajectory_ok(table, REF_DT):  # the timed path, so the joint speeds count too
                 break
         else:
             raise RuntimeError("no valid rigid path found; check the BenchmarkCfg lengths")
-        speed = float(rng.uniform(*cfg.rigid_speed))
-        arc = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(dense, axis=0), axis=-1))])
-        _, motion_time = trapezoid_progress(np.zeros(1), arc[-1], speed, cfg.rigid_accel)
-        duration = motion_time + cfg.hold_time
-        t = _grid(duration)
-        s, _ = trapezoid_progress(t, arc[-1], speed, cfg.rigid_accel)
-        pos = np.stack([np.interp(s, arc, dense[:, k]) for k in range(3)], axis=-1)
-        tables.append(_poses(pos, np.broadcast_to(cfg.spawn[1], (len(t), 4))))
+        tables.append(table)
         durations.append(duration)
         vertices_all.append(np.pad(vertices, ((0, 4 - len(vertices)), (0, 0)), constant_values=np.nan))
         kinds.append(n_bends)
