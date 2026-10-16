@@ -20,7 +20,6 @@ from hybrid_control.utils.torch_rotations import quat_apply, quat_mul
 
 EE_FRAME = "panda_hand"
 ROOT_FRAME = "panda_link0"
-N_BASE_DOFS = 6  # floating-base columns that precede the joint columns of the Isaac Lab Jacobian and dynamics
 
 
 class ArmBatch:
@@ -42,7 +41,7 @@ class ArmBatch:
         offset = ee_offset or Pose(np.zeros(3), np.array([0.0, 0.0, 0.0, 1.0]))
         self._off_pos = torch.tensor(np.asarray(offset.position), dtype=torch.float32, device=dev)
         self._off_quat = torch.tensor(np.asarray(offset.quaternion), dtype=torch.float32, device=dev)
-        self.dof_cols = [N_BASE_DOFS + i for i in env.arm_ids]
+        self.dof_cols = [env.n_base_dofs + i for i in env.arm_ids]  # floating base: 6 base columns precede the joints
         lim = robot.data.joint_pos_limits.torch[0, env.arm_ids].cpu().numpy()
         self.limits = (lim[:, 0].copy(), lim[:, 1].copy())
         self.time = 0.0

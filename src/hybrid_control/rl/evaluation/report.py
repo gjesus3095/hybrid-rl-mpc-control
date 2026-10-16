@@ -25,6 +25,7 @@ ROWS = [
     ("", "failed: COM left footprint or tipped (n)", lambda s: s["failed"], "{:d}"),
     ("", "failure rate [%]", lambda s: 100 * s["failure_rate"], "{:.1f}"),
     ("", "mean time of failure [s]", lambda s: s["failure_time_s"], "{:.2f}"),
+    ("", "would have failed: tipped or COM left footprint at any time (n)", lambda s: s["would_fail"], "{:d}"),
     ("", "tipped at any time (n)", lambda s: s["tipped"], "{:d}"),
     ("", "COM left footprint at any time (n)", lambda s: s["left_footprint"], "{:d}"),
     ("Position error (TCP vs reference)", None, None, None),

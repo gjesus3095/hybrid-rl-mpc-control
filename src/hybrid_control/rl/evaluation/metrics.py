@@ -94,6 +94,7 @@ def summarize(log: dict[str, np.ndarray], valid: np.ndarray, fail_step: np.ndarr
         in_time = np.arange(valid.shape[1])[None, :] < n_steps[:, None]
         out["tipped"] = int(((log["tipped"][..., 0] > 0) & in_time).any(1).sum())
         out["left_footprint"] = int(((log["left_footprint"][..., 0] > 0) & in_time).any(1).sum())
+        out["would_fail"] = int((((log["tipped"][..., 0] > 0) | (log["left_footprint"][..., 0] > 0)) & in_time).any(1).sum())
     for name, err in (("pos_err_m", pos), ("ori_err_rad", ori)):
         rms = _per_scenario(err, valid, lambda v: float(np.sqrt(np.mean(v**2))))
         out[name] = {

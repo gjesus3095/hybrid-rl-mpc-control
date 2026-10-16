@@ -42,10 +42,11 @@ def build_robot_cfg(prim_path: str, base_mass: float) -> "ArticulationCfg":  # n
     return cfg
 
 
-def free_and_resize_base(prim_path: str, footprint: tuple[float, float], friction: float = 0.0):
+def free_and_resize_base(prim_path: str, footprint: tuple[float, float], friction: float = 0.0, fixed_base: bool = False):
     """Deactivate the dummy world anchor, re-shape the platform under the arm mount, set its material.
 
-    ``prim_path`` is one robot instance (no regex). Must run before ``sim.reset()``.
+    ``prim_path`` is one robot instance (no regex). Must run before ``sim.reset()``. ``fixed_base`` welds ``base_link``
+    to the world at its spawn pose with a ``FixedJoint`` (the articulation then has no floating-base DoFs).
     """
     from pxr import Gf, PhysxSchema, UsdGeom, UsdPhysics
 
@@ -58,6 +59,15 @@ def free_and_resize_base(prim_path: str, footprint: tuple[float, float], frictio
     base_prim = stage.GetPrimAtPath(f"{prim_path}/base_link")
     UsdPhysics.ArticulationRootAPI.Apply(base_prim)
     PhysxSchema.PhysxArticulationAPI.Apply(base_prim).CreateEnabledSelfCollisionsAttr(False)
+    if fixed_base:
+        # body0 left empty = the world; the joint frame is base_link's spawn pose, so nothing moves at the first step
+        weld = UsdPhysics.FixedJoint.Define(stage, f"{prim_path}/base_weld")
+        weld.CreateBody1Rel().SetTargets([base_prim.GetPath()])
+        pose = UsdGeom.Xformable(base_prim).ComputeLocalToWorldTransform(0.0)
+        weld.CreateLocalPos0Attr().Set(Gf.Vec3f(pose.ExtractTranslation()))
+        weld.CreateLocalRot0Attr().Set(Gf.Quatf(pose.ExtractRotationQuat()))
+        weld.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
+        weld.CreateLocalRot1Attr().Set(Gf.Quatf(1.0, 0.0, 0.0, 0.0))
     scale = (footprint[0] / STOCK_FOOTPRINT[0], footprint[1] / STOCK_FOOTPRINT[1], 1.0)
     for child in base_prim.GetChildren():
         if child.GetName() not in ("visuals", "collisions"):

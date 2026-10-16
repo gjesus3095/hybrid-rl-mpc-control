@@ -27,8 +27,13 @@ from hybrid_control.rl.config import CONTROLLERS, saved_controller, saved_observ
 parser = argparse.ArgumentParser(description="Evaluate a policy on the deterministic benchmark.")
 parser.add_argument("--checkpoint", type=str, default=None)
 parser.add_argument("--zero_policy", action="store_true", help="Baseline: send zero base commands instead of the policy.")
+parser.add_argument("--fixed_base", action="store_true",
+                    help="Pin the platform at its spawn pose (no planar motion, yaw or tilt) and let nothing terminate: arm-only "
+                         "tracking reference. The COM-margin failures are counted separately as 'would have failed'.")
 parser.add_argument("--benchmark", type=str, default=None,
                     help="Benchmark .npz from scripts/generate_eval_set.py (for the same --controller); default: generate it in memory.")
+parser.add_argument("--ellipse_speed", type=float, nargs=2, default=None, metavar=("LOW", "HIGH"),
+                    help="Override the tangential speed range of the ellipse set [m/s] (only when the benchmark is generated in memory).")
 parser.add_argument("--sets", nargs="+", default=None, help="Sets to run (default: all in the benchmark).")
 parser.add_argument("--num_scenarios", type=int, default=None,
                     help="Only the first N scenarios of every set, e.g. for a smoke test (same scenarios as in the full run).")
@@ -54,6 +59,7 @@ args_cli.controller = args_cli.controller or (saved_controller(args_cli.checkpoi
 import dataclasses
 import json
 import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -128,7 +134,8 @@ def run_set(env, policy, benchmark: Benchmark, name: str, slots: int, zero_polic
     for field, dim in LOG_FIELDS.items():
         log[field] = stacked[..., start:start + dim]
         start += dim
-    fail_step = failure_steps((log["tipped"][..., 0] > 0) | (log["left_footprint"][..., 0] > 0), n_steps)
+    flags = (log["tipped"][..., 0] > 0) | (log["left_footprint"][..., 0] > 0)
+    fail_step = np.full(len(n_steps), -1) if env.env.fixed_base else failure_steps(flags, n_steps)  # fixed base: nothing ends a scenario
     valid = valid_mask(n_steps, fail_step, stacked.shape[1])
     return log, valid, fail_step, n_steps, env.ik_failures - ik_before
 
@@ -145,14 +152,15 @@ def git_state() -> str:
 
 def main():
     benchmark = (Benchmark.load(args_cli.benchmark) if args_cli.benchmark
-                 else generate_benchmark(BenchmarkCfg(controller=args_cli.controller)))
+                 else generate_benchmark(BenchmarkCfg(controller=args_cli.controller,
+                                                           **({"ellipse_speed": tuple(args_cli.ellipse_speed)} if args_cli.ellipse_speed else {}))))
     if benchmark.cfg.controller != args_cli.controller:
         raise SystemExit(f"benchmark was generated for the {benchmark.cfg.controller!r} controller (TCP spawn pose), "
                          f"not {args_cli.controller!r}")
     names = args_cli.sets or [n for n in SET_NAMES if n in benchmark.sets]
     slots = args_cli.num_scenarios or benchmark.cfg.n_per_set
     ckpt = args_cli.checkpoint
-    name = args_cli.name or (f"{Path(ckpt).resolve().parent.name}_{Path(ckpt).stem}" if ckpt else "zero_policy")
+    name = args_cli.name or (f"{Path(ckpt).resolve().parent.name}_{Path(ckpt).stem}" if ckpt else "zero_policy") + ("_fixed_base" if args_cli.fixed_base else "")
     out_dir = Path(args_cli.out_dir or Path(__file__).resolve().parents[2] / "out" / "eval" / name)
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"[EVAL] benchmark {benchmark.fingerprint()}, sets {names}, {slots} scenarios each -> {out_dir}", flush=True)
@@ -160,7 +168,8 @@ def main():
     sim_cfg = sim_utils.SimulationCfg(dt=1.0 / 120.0, device=args_cli.device)
     with launch_simulation(sim_cfg, args_cli):
         sim = SimulationContext(sim_cfg)
-        base_env = RidgebackDREnv(benchmark.params(names[0], slots), sim, spacing=args_cli.spacing)
+        base_env = RidgebackDREnv(benchmark.params(names[0], slots), sim, spacing=args_cli.spacing,
+                                  fixed_base=args_cli.fixed_base)
         base_env.start()
         env = BaseStabilizationEnv(
             base_env,
@@ -176,12 +185,17 @@ def main():
             runner.load(ckpt)
             policy = runner.get_inference_policy(device=str(env.device))
 
-        for payload in args_cli.payloads or [None]:
+        payloads = args_cli.payloads or [None]
+        total_sets, done_sets, t_start = len(payloads) * len(names), 0, time.time()
+        print(f"[EVAL] START {name}: {len(payloads)} payload run(s) x {len(names)} sets = {total_sets} sets"
+              + (" (welded base, nothing terminates)" if args_cli.fixed_base else ""), flush=True)
+        for payload in payloads:
             run_dir = out_dir if payload is None else out_dir / f"payload_{payload:g}kg"
             run_dir.mkdir(parents=True, exist_ok=True)
             label = "" if payload is None else f" at {payload:g} kg payload"
             summaries = {}
             for set_name in names:
+                t_set = time.time()
                 log, valid, fail_step, n_steps, ik_failures = run_set(env, policy, benchmark, set_name, slots,
                                                                       args_cli.zero_policy, payload)
                 scenario = benchmark.sets[set_name]
@@ -194,19 +208,25 @@ def main():
                     run_dir / f"{set_name}.npz", **log, valid=valid, fail_step=fail_step, n_steps=n_steps, dt=env.dt,
                     duration=scenario.duration[:slots], dynamics=dynamics, footprints=benchmark.footprints[:slots],
                 )
-                print(f"[EVAL]{label} {set_name}: {int((fail_step >= 0).sum())}/{slots} failed", flush=True)
+                done_sets += 1
+                elapsed = time.time() - t_start
+                eta = elapsed / done_sets * (total_sets - done_sets)
+                print(f"[EVAL] DONE set {done_sets}/{total_sets}{label} {set_name}: {int((fail_step >= 0).sum())}/{slots} failed"
+                      + (f", {summaries[set_name]['would_fail']} would have failed" if args_cli.fixed_base else "")
+                      + f", pos RMS {100 * summaries[set_name]['pos_err_m']['rms']:.2f} cm"
+                      + f" | {time.time() - t_set:.0f} s (total {elapsed / 60:.1f} min, about {eta / 60:.1f} min left)", flush=True)
 
             # still inside launch_simulation: leaving it shuts Kit (and the process) down
             meta = {
-                "name": name, "checkpoint": ckpt, "zero_policy": args_cli.zero_policy, "controller": args_cli.controller,
-                "payload_kg": payload, "benchmark_seed": benchmark.cfg.seed, "scenarios_per_set": slots,
+                "name": name, "checkpoint": ckpt, "zero_policy": args_cli.zero_policy, "fixed_base": args_cli.fixed_base,
+                "controller": args_cli.controller, "payload_kg": payload, "benchmark_seed": benchmark.cfg.seed, "scenarios_per_set": slots,
                 "policy_dt": env.dt, "git": git_state(), "date": datetime.now().isoformat(timespec="seconds"),
             }
             merged, fingerprints = dict(summaries), {n: benchmark.fingerprint([n]) for n in summaries}
             summary_path = run_dir / "summary.json"
             if summary_path.exists():  # add to an earlier run of the same policy (e.g. a set added to the benchmark later)
                 before = json.loads(summary_path.read_text())
-                keys = ("checkpoint", "zero_policy", "controller", "scenarios_per_set", "payload_kg")
+                keys = ("checkpoint", "zero_policy", "fixed_base", "controller", "scenarios_per_set", "payload_kg")
                 if all(before["meta"].get(k) == meta[k] for k in keys):
                     merged = {**before["sets"], **summaries}
                     fingerprints = {**before["meta"].get("set_fingerprints", {}), **fingerprints}
@@ -214,8 +234,10 @@ def main():
             meta["benchmark_fingerprint"] = benchmark.fingerprint(list(merged))  # over the sets in this summary
             meta["set_fingerprints"] = fingerprints
             summary_path.write_text(json.dumps({"meta": meta, "sets": merged}, indent=2))
+            print(f"[EVAL] FINISHED{label or ' run'}: {len(merged)} sets saved to {run_dir}", flush=True)
             print(f"\n[RESULT] {name}{label} (benchmark {meta['benchmark_fingerprint']}, {slots} scenarios per set)\n"
                   + format_table(merged), flush=True)
+        print(f"[EVAL] ALL DONE {name}: {total_sets} sets in {(time.time() - t_start) / 60:.1f} min -> {out_dir}", flush=True)
         env.close()
 
 
