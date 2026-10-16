@@ -193,6 +193,101 @@ def test_fixed_points_hold_and_difficulty_zero_sines_hold_their_centre_orientati
     assert (quat_dist(quat, trajs.centre_quat[:, None].expand_as(quat)) < 1e-5).all()
 
 
+def test_bezier_helpers_reproduce_the_curve():
+    from hybrid_control.rl.policy_with_controller.trajectories import bezier_eval, bezier_halve, bezier_pieces
+
+    torch.manual_seed(6)
+    s = torch.linspace(0.0, 1.0, 101).expand(8, 101)
+    line = torch.rand(8, 2, 3)  # order 1 = the straight segment
+    assert torch.allclose(bezier_eval(line, s), line[:, :1] + s[..., None] * (line[:, 1:] - line[:, :1]), atol=1e-6)
+    for order in (2, 3, 5, 7):
+        points = torch.rand(8, order + 1, 3, dtype=torch.float64)
+        curve = bezier_eval(points, s.double())
+        assert torch.allclose(curve[:, 0], points[:, 0]) and torch.allclose(curve[:, -1], points[:, -1])
+        left, right = bezier_halve(points)
+        half = s[:, :51].double() * 2  # each half reparametrized to [0, 1]
+        assert torch.allclose(bezier_eval(left, half), curve[:, :51]) and torch.allclose(bezier_eval(right, half), curve[:, 50:])
+        pieces = bezier_pieces(points, 3)  # 8 pieces in parameter order
+        assert torch.allclose(pieces[:, 0, 0], points[:, 0]) and torch.allclose(pieces[:, -1, -1], points[:, -1])
+        assert torch.allclose(pieces[:, 3, -1], bezier_eval(points, torch.full((8, 1), 0.5, dtype=torch.float64))[:, 0])
+
+
+@pytest.mark.parametrize("order", [2, 3, 4, 6])
+def test_curve_valid_never_accepts_a_curve_that_leaves_the_region(order):
+    from hybrid_control.rl.policy_with_controller.trajectories import bezier_eval
+
+    trajs = ReferenceTrajectories(1, "cpu", TrajectoryCfg(spatial_order=order))
+    cfg = trajs.cfg
+    centre = torch.tensor(cfg.arm_base)
+    torch.manual_seed(order)
+    m = 3000
+    ends = trajs._sample_point(2 * m).reshape(m, 2, 3)  # valid end points, curves often bend around the arm
+    frac = torch.linspace(0.0, 1.0, order + 1)[None, :, None]
+    points = ends[:, :1] + frac * (ends[:, 1:] - ends[:, :1]) + torch.cat(
+        [torch.zeros(m, 1, 3), 0.3 * torch.randn(m, order - 1, 3), torch.zeros(m, 1, 3)], dim=1)
+    pts = bezier_eval(points, torch.linspace(0.0, 1.0, 2000).expand(m, 2000))
+    dense = (((pts - centre)[..., :2].norm(dim=-1) >= cfg.inner_radius_xy).all(1)
+             & ((pts - centre).norm(dim=-1) <= cfg.outer_radius).all(1) & (pts[..., 2] >= cfg.quintic_min_z).all(1))
+    valid = trajs.curve_valid(points)
+    assert (valid & ~dense).sum() == 0  # conservative: never accepts a curve that leaves the region
+    assert valid.sum() >= 0.5 * dense.sum()  # ... but accepts most of the good ones
+
+
+@pytest.mark.parametrize("order", [3, 5])
+def test_bezier_quintic_trajectories_pass_waypoints_and_satisfy_constraints(order):
+    trajs, start = make_quintic(n=300, spatial_order=order)
+    cfg, n = trajs.cfg, trajs.num_envs
+    assert trajs.control_points.shape == (n, 2, order + 1, 3)
+    for t, k in ((0.0, 0), (cfg.segment_time[0], 1), (cfg.duration, 2)):
+        assert torch.allclose(trajs.position(torch.full((n,), t)), trajs.waypoints[:, k], atol=1e-5)
+    pos, quat = trajs.lookahead_pose(torch.zeros(n), torch.linspace(0.0, cfg.duration, 2001))
+    centre = torch.tensor(cfg.arm_base)
+    assert ((pos - centre)[..., :2].norm(dim=-1) >= cfg.inner_radius_xy - 1e-5).all()
+    assert ((pos - centre).norm(dim=-1) <= cfg.outer_radius + 1e-5).all() and (pos[..., 2] >= cfg.quintic_min_z - 1e-5).all()
+    straight = trajs.waypoints[:, :1] + torch.linspace(0, 1, 1001)[None, :, None] * (trajs.waypoints[:, 1:2] - trajs.waypoints[:, :1])
+    assert ((pos[:, :1001] - straight).norm(dim=-1).max(1).values > 1e-3).float().mean() > 0.9  # the paths do bend
+    assert ((quat[:, 1:] * quat[:, :-1]).sum(-1) > 0.99).all()
+
+
+def test_sine_blend_is_c2_and_starts_at_rest():
+    trajs = make_sines(n=100)
+    for name in ReferenceTrajectories.STATE:  # float64 for clean second differences
+        value = getattr(trajs, name)
+        if value.is_floating_point():
+            setattr(trajs, name, value.double())
+    eps, n = 1e-4, trajs.num_envs
+
+    def derivatives(t):
+        p = trajs.lookahead(torch.full((n,), t, dtype=torch.float64), torch.tensor([-eps, 0.0, eps], dtype=torch.float64))
+        return (p[:, 2] - p[:, 0]) / (2 * eps), (p[:, 2] - 2 * p[:, 1] + p[:, 0]) / eps**2
+
+    v0, a0 = derivatives(2 * eps)
+    assert v0.norm(dim=-1).max() < 1e-3 and a0.norm(dim=-1).max() < 0.05  # at rest, ~zero acceleration
+    tb = trajs.cfg.blend_time
+    (v_before, a_before), (v_after, a_after) = derivatives(tb - 3 * eps), derivatives(tb + 3 * eps)
+    assert (v_before - v_after).norm(dim=-1).max() < 1e-3 and (a_before - a_after).norm(dim=-1).max() < 0.05
+
+
+def test_sine_phases_match_the_quintic_segments_and_centres_stay_below_30_deg():
+    cfg = TrajectoryCfg()
+    assert cfg.blend_time == cfg.segment_time[0] == 2.5 and cfg.duration - cfg.blend_time == cfg.segment_time[1]
+    trajs, _ = make_trajs(n=2000, p_fixed=0.5, p_sine=0.5, p_quintic=0.0)
+    rel = trajs.centre - torch.tensor(cfg.shoulder)
+    elevation = torch.rad2deg(torch.asin(rel[:, 2] / rel.norm(dim=-1)))
+    assert elevation.max() <= 30.0 + 1e-3 and elevation.min() >= -35.0 - 1e-3
+
+
+def test_saved_spatial_order_defaults_old_runs_to_straight(tmp_path):
+    from hybrid_control.rl.config import saved_spatial_order
+
+    (tmp_path / "params").mkdir()
+    ckpt = str(tmp_path / "model_0.pt")
+    (tmp_path / "params" / "env.yaml").write_text("trajectory:\n  difficulty: 1.0\n")
+    assert saved_spatial_order(ckpt) == 1
+    (tmp_path / "params" / "env.yaml").write_text("trajectory:\n  spatial_order: 4\n")
+    assert saved_spatial_order(ckpt) == 4
+
+
 def test_kind_mix():
     from hybrid_control.rl.policy_with_controller.trajectories import FIXED, QUINTIC, SINE
 

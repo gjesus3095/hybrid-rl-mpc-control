@@ -28,7 +28,7 @@ $PY $R/scripts/isaac/train_base_policy.py --num_envs 256 --qp_workers 48 --max_i
 - Logs and checkpoints go to `$R/logs/base_policy/<timestamp>/` (or `--log_dir`): `model_<iter>.pt` every 50 iterations
   plus the last one, and the TensorBoard event file. `logs/` is gitignored.
 - Resume: add `--resume <dir>/model_<iter>.pt`.
-- Other flags: `--seed`, `--num_steps_per_env` (24), `--difficulty` (trajectory amplitude/speed, 0..1),
+- Other flags: `--seed`, `--num_steps_per_env` (24), `--difficulty` (trajectory amplitude/speed, 0..1), `--spatial_order` (Bezier order of the quintic paths, 1 = straight; play defaults to the checkpoint's),
   `--ik_every` (physics steps per QP update, must divide 4), `--spacing`.
 - Speed: about 3000 env-steps/s at 256 envs with `--qp_workers 48`. The QP is the bottleneck, so more envs need more
   workers (up to the number of free cores; the machine has 104). `--qp_workers 0` solves serially (about 10x slower).
@@ -66,6 +66,30 @@ $PY $R/scripts/isaac/record_episodes_video.py --checkpoint $CK --title "TRAINED 
 ```
 
 Copy to your PC: `scp z8:/home/u0181636/hybrid-rl-mpc-control/out/<file>.mp4 .`
+
+## Chicken overlay (videos only)
+
+`--chicken` on `record_episodes_video.py` dresses every robot as a cartoon chicken: body on the base, head on the
+hand, beak on the fingers, and a neck tube that follows the arm. It is visual only, so physics, policy and QP behave
+exactly as without it. The Franka meshes are hidden under the skin.
+
+```bash
+# trained policy with the chicken skin
+$PY $R/scripts/isaac/record_episodes_video.py --checkpoint $CK --title "CHICKEN" --chicken \
+    --video_path $R/out/chicken_episodes.mp4
+# same, but the head looks ahead (TCP forward, 10 deg down, comb up) instead of the training orientation (TCP down);
+# out of the training distribution, so expect worse tracking/stability
+$PY $R/scripts/isaac/record_episodes_video.py --checkpoint $CK --title "CHICKEN" --chicken --head_forward \
+    --kinds quintic --view front --video_path $R/out/chicken_head_forward.mp4
+```
+
+- `--head_forward` only changes the quintic and sine targets; a fixed point keeps its spawn orientation, hence
+  `--kinds quintic` (or `quintic sine`) to make the head pose visible in every episode.
+- Still image of the skin (no policy, arm moved to a head-forward pose) -> `out/chicken_snapshot.png`:
+  `$PY $R/scripts/isaac/chicken_snapshot.py` (`--show_robot` keeps the Franka visible, `--eye`/`--target` move the camera).
+- The meshes and overlay URDF (`src/hybrid_control/sim_interfaces/isaac/assets/chicken/`) are generated; after
+  editing the parts in `scripts/make_chicken_assets.py`, regenerate them with
+  `cd $R && uv run python scripts/make_chicken_assets.py`.
 
 ## Checks and plots
 

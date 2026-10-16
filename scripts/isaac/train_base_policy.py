@@ -25,6 +25,8 @@ parser.add_argument("--num_steps_per_env", type=int, default=24, help="Rollout l
 parser.add_argument("--spacing", type=float, default=2.5, help="Env spacing [m].")
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("--difficulty", type=float, default=1.0, help="Trajectory amplitude/speed scale in [0, 1].")
+parser.add_argument("--spatial_order", type=int, default=1,
+                    help="Bezier order of the quintic trajectories' paths in space (1 = straight segments).")
 parser.add_argument("--controller", choices=("ik_qp", "impedance"), default="ik_qp",
                     help="Arm controller: ik_qp (Pink IK/QP, joint position targets) or impedance (impedance QP, torques).")
 parser.add_argument("--ik_every", type=int, default=2, help="Physics steps per QP update (must divide 4).")
@@ -67,7 +69,7 @@ def main():
         sim = SimulationContext(sim_cfg)
         env_cfg = StabilizationEnvCfg(
             controller=args_cli.controller, ik_every=args_cli.ik_every, qp_workers=args_cli.qp_workers,
-            trajectory=TrajectoryCfg(difficulty=args_cli.difficulty),
+            trajectory=TrajectoryCfg(difficulty=args_cli.difficulty, spatial_order=args_cli.spatial_order),
             # a resumed run keeps the observations (network input size) of the checkpoint it continues
             **({"observation": saved_observation_cfg(args_cli.resume)} if args_cli.resume else {}),
         )
@@ -86,7 +88,7 @@ def main():
         runner = OnPolicyRunner(env, runner_cfg, log_dir=log_dir, device=str(env.device))
         if args_cli.resume:
             runner.load(args_cli.resume)
-        print(f"[INFO] {env.num_envs} envs, arm controller {args_cli.controller}, policy {1 / env.dt:.0f} Hz, episode {env.max_episode_length} steps, logs: {log_dir}")
+        print(f"[INFO] {env.num_envs} envs, arm controller {args_cli.controller}, quintic path order {args_cli.spatial_order}, policy {1 / env.dt:.0f} Hz, episode {env.max_episode_length} steps, logs: {log_dir}")
         try:
             runner.learn(num_learning_iterations=args_cli.max_iterations, init_at_random_ep_len=True)
         finally:

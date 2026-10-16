@@ -47,6 +47,12 @@ def saved_observation_cfg(checkpoint: str) -> ObservationCfg:
     return ObservationCfg(**{k: tuple(v) if isinstance(v, list) else v for k, v in saved.items() if k in names})
 
 
+def saved_spatial_order(checkpoint: str) -> int:
+    """Bezier order of the quintic trajectories' paths a checkpoint was trained with (``trajectory.spatial_order`` in
+    ``env.yaml``); runs from before the option used straight segments (1)."""
+    return int((_saved_env_cfg(checkpoint).get("trajectory") or {}).get("spatial_order", 1))
+
+
 def make_runner_cfg(
     num_steps_per_env: int = 24,
     save_interval: int = 50,

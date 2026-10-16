@@ -34,7 +34,7 @@ class RewardCfg:
     w_progress: float = 0.0  # disabled, was 1.0; clamp(rate of approach, -1, 1) [m/s] while d > deadzone; potential-based
     # --- penalties on base motion: slow, smooth corrections ---
     w_speed: float = -1.0  # (|v| / lin_speed_scale)^2, measured base speed
-    lin_speed_scale: float = 0.5  # [m/s]
+    lin_speed_scale: float = 1.0  # [m/s] (= max_base_speed)
     w_spin: float = -1.0  # (yaw rate / yaw_rate_scale)^2, measured
     yaw_rate_scale: float = 0.6  # [rad/s]
     w_yaw: float = 0.0  # (yaw / yaw_scale)^2; disabled (was -0.3): spinning is already penalized by w_spin

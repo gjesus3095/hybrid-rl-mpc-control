@@ -27,8 +27,11 @@ from pathlib import Path
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
-from hybrid_control.rl.config import CONTROLLERS, qp_solver_name, saved_controller, saved_observation_cfg, saved_qp_solver
-from hybrid_control.rl.policy_with_controller.trajectories import KINDS
+from hybrid_control.rl.config import (
+    CONTROLLERS, qp_solver_name, saved_controller, saved_observation_cfg, saved_qp_solver, saved_spatial_order,
+)
+from hybrid_control.rl.policy_with_controller.trajectories import KINDS, TrajectoryCfg
+from hybrid_control.sim_interfaces.isaac.ridgeback.params import VIDEO_LIGHT
 
 OUT_DIR = Path(__file__).resolve().parents[2] / "out"
 parser = argparse.ArgumentParser(description="Record one env over multiple episodes.")
@@ -46,11 +49,29 @@ parser.add_argument("--hold_end", type=float, default=0.5, help="Seconds after a
 parser.add_argument("--qp_workers", type=int, default=2)
 parser.add_argument("--controller", choices=CONTROLLERS, default=None,
                     help="Arm controller; default: the one the checkpoint was trained with (<run>/params/env.yaml).")
+parser.add_argument("--spatial_order", type=int, default=None,
+                    help="Bezier order of the quintic paths; default: the checkpoint's (<run>/params/env.yaml), 1 for old runs.")
 parser.add_argument("--video_path", type=str, default=str(OUT_DIR / "episodes.mp4"))
 parser.add_argument("--video_fps", type=int, default=30)
+parser.add_argument("--view", choices=["all", "front", "left", "right", "back"], default="all",
+                    help="One camera view (full size) instead of the 2 x 2 grid.")
+parser.add_argument("--elevation", type=float, nargs=2, default=None, metavar=("LOW", "HIGH"),
+                    help="Fixed-point/sine centre elevation above the shoulder [deg]; default: the training range.")
+parser.add_argument("--height_clearance", type=float, default=None,
+                    help="Quintic paths stay this far above the platform top [m]; default: the training value.")
+parser.add_argument("--head_forward", action="store_true",
+                    help="Targets with the TCP pointing forward (10 deg down) and the hand y axis up, i.e. the chicken looks "
+                         "ahead with its comb up (quintic and sine targets; a fixed point keeps the spawn orientation). Out of the "
+                         "training distribution (TCP pointing down).")
+parser.add_argument("--light", type=float, default=VIDEO_LIGHT,
+                    help=f"Distant light intensity (default {VIDEO_LIGHT:g}; training and the viewer scripts use 3000, "
+                         "which overexposes the light ground in the camera images).")
+parser.add_argument("--chicken", action="store_true", help="Dress the robot as a cartoon chicken (visual only).")
 add_launcher_args(parser)
 args_cli = parser.parse_args()
 args_cli.controller = args_cli.controller or saved_controller(args_cli.checkpoint)
+if args_cli.spatial_order is None:
+    args_cli.spatial_order = saved_spatial_order(args_cli.checkpoint)
 args_cli.enable_cameras = True
 
 import numpy as np
@@ -72,13 +93,19 @@ FOCAL = 16.0  # [mm]
 LOOK_OFFSET, CAM_DIST, CAM_HEIGHT = (0.45, 0.0, 0.55), 3.3, 1.15  # look point (env-local), camera distance and height
 # (name, horizontal direction from the look point to the camera) in grid order; the robot faces +x at spawn
 VIEWS = [("front", (1.0, 0.0)), ("left", (0.0, 1.0)), ("right", (0.0, -1.0)), ("back", (-1.0, 0.0))]
+if args_cli.view != "all":  # a single view fills the whole grid area
+    VIEWS = [v for v in VIEWS if v[0] == args_cli.view]
+    TILE = (2 * TILE[0], 2 * TILE[1])
 
 
 def compose(tiles, base_env, k, status, t_ep, episode, n_episodes, outcomes, title, rho, qp_lines, kind, phase):
-    """Side panel + 2 x 2 grid of the camera views, with all text overlays."""
+    """Side panel + 2 x 2 grid of the camera views (or the single view), with all text overlays."""
     from PIL import Image, ImageDraw, ImageFont
 
-    grid = np.concatenate([np.concatenate(tiles[:2], axis=1), np.concatenate(tiles[2:], axis=1)], axis=0)
+    if len(tiles) == 1:
+        grid = tiles[0]
+    else:
+        grid = np.concatenate([np.concatenate(tiles[:2], axis=1), np.concatenate(tiles[2:], axis=1)], axis=0)
     h = grid.shape[0]
     frame = np.concatenate([np.full((h, PANEL_W, 3), 25, dtype=np.uint8), grid.astype(np.uint8)], axis=1)
     image = Image.fromarray(frame)
@@ -91,8 +118,9 @@ def compose(tiles, base_env, k, status, t_ep, episode, n_episodes, outcomes, tit
         x, y = PANEL_W + (i % 2) * TILE[0], (i // 2) * TILE[1]
         draw.text((x + 14, y + 10), f"{name} view", font=tag, fill=white, **kw)
     draw.line((PANEL_W, 0, PANEL_W, h), fill=white, width=3)
-    draw.line((PANEL_W + TILE[0], 0, PANEL_W + TILE[0], h), fill=white, width=2)
-    draw.line((PANEL_W, TILE[1], frame.shape[1], TILE[1]), fill=white, width=2)
+    if len(VIEWS) > 1:
+        draw.line((PANEL_W + TILE[0], 0, PANEL_W + TILE[0], h), fill=white, width=2)
+        draw.line((PANEL_W, TILE[1], frame.shape[1], TILE[1]), fill=white, width=2)
     # side panel
     draw.text((20, 14), title, font=big, fill=white, **kw)
     draw.text((20, 62), f"episode {episode} / {n_episodes}   t = {t_ep:4.1f} s", font=font, fill=white, **kw)
@@ -123,6 +151,20 @@ def compose(tiles, base_env, k, status, t_ep, episode, n_episodes, outcomes, tit
     return np.asarray(image)
 
 
+def trajectory_cfg() -> TrajectoryCfg:
+    """The training trajectory distribution, with the recording overrides from the command line."""
+    overrides = {}
+    if args_cli.elevation is not None:
+        overrides["elevation_deg"] = tuple(args_cli.elevation)
+    if args_cli.height_clearance is not None:
+        overrides["height_clearance"] = args_cli.height_clearance
+    if args_cli.head_forward:
+        # pitch the TCP z axis to the front, then yaw -90 deg about it so the hand y axis (the comb) points up; targets
+        # in front only, or the neck twists to look ahead while the head sits beside the body
+        overrides.update(pitch_deg=80.0, tilt_max_deg=10.0, yaw_centre_deg=-90.0, yaw_range_deg=10.0, azimuth_deg=30.0)
+    return TrajectoryCfg(spatial_order=args_cli.spatial_order, **overrides)
+
+
 def main():
     sim_cfg = sim_utils.SimulationCfg(dt=1.0 / 120.0, device=args_cli.device)
     with launch_simulation(sim_cfg, args_cli):
@@ -130,12 +172,18 @@ def main():
         k = args_cli.episodes
         scenarios = DomainRandomization().sample_many(k, seed=args_cli.seed)  # same seed -> same episodes in every video
         # Env 0 is an unused dummy (the first env of a scene is not reliably rendered); episode e runs in env e.
-        base_env = RidgebackDREnv([scenarios[0]] + scenarios, sim, spacing=args_cli.spacing, num_cols=k + 1)
+        base_env = RidgebackDREnv([scenarios[0]] + scenarios, sim, spacing=args_cli.spacing, num_cols=k + 1,
+                                  light_intensity=args_cli.light)
         n = base_env.num_envs
 
         from isaaclab.sensors.camera import Camera, CameraCfg
         from isaaclab_physx.renderers import IsaacRtxRendererCfg
 
+        skin = None
+        if args_cli.chicken:
+            from hybrid_control.sim_interfaces.isaac.ridgeback.chicken import ChickenSkin
+
+            skin = ChickenSkin([f"/World/envs/env_{i}/Robot" for i in range(n)])
         markers = ComMarkers(n, sim.device)
         ref_markers = ReferenceMarkers(n, sim.device, len(saved_observation_cfg(args_cli.checkpoint).lookahead))
         cameras = [
@@ -151,7 +199,7 @@ def main():
             for name, _ in VIEWS
         ]
         base_env.start()
-        env = BaseStabilizationEnv(base_env, StabilizationEnvCfg(controller=args_cli.controller, qp_workers=args_cli.qp_workers, observation=saved_observation_cfg(args_cli.checkpoint)), seed=args_cli.seed)
+        env = BaseStabilizationEnv(base_env, StabilizationEnvCfg(controller=args_cli.controller, qp_workers=args_cli.qp_workers, observation=saved_observation_cfg(args_cli.checkpoint), trajectory=trajectory_cfg()), seed=args_cli.seed)
         env.auto_reset = False
         qp_lines = [f"training: {saved_qp_solver(args_cli.checkpoint)}",
                     f"evaluation: {qp_solver_name(env.scfg.controller, env.scfg.ik.qp_solver)}"]
@@ -196,6 +244,8 @@ def main():
                         hold = int((args_cli.hold_tipped if failed else args_cli.hold_end) / env.dt)
                     status = f"TIPPED at {t_tip:.1f} s" if finished and not outcomes[-1] else ("completed" if finished else "upright")
                     markers.update(base_env)
+                    if skin is not None:
+                        skin.update(base_env.robot)
                     ref_markers.update(env)
                     for cam in cameras:
                         cam.update(env.dt)

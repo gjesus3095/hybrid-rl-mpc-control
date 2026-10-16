@@ -28,11 +28,12 @@ parser.add_argument("--n", type=int, default=40)
 parser.add_argument("--difficulty", type=float, default=1.0)
 parser.add_argument("--seconds", type=float, default=5.0)
 parser.add_argument("--seed", type=int, default=0)
+parser.add_argument("--spatial_order", type=int, default=1, help="Bezier order of the quintic paths (1 = straight).")
 parser.add_argument("--out", type=str, default=str(Path(__file__).resolve().parents[1] / "out" / "reference_trajectories.png"))
 args = parser.parse_args()
 
 torch.manual_seed(args.seed)
-cfg = TrajectoryCfg(difficulty=args.difficulty)
+cfg = TrajectoryCfg(difficulty=args.difficulty, spatial_order=args.spatial_order)
 trajs = ReferenceTrajectories(args.n, "cpu", cfg)
 start = torch.tensor([0.61, 0.0, 0.635]).expand(args.n, 3)  # panda_hand at spawn in Isaac (folded arm)
 trajs.reset(torch.arange(args.n), start)
@@ -45,6 +46,7 @@ moving = kind == SINE
 quintic = kind == QUINTIC
 shoulder, arm_base = np.array(cfg.shoulder), np.array(cfg.arm_base)
 waypoints = trajs.waypoints.numpy()
+control = trajs.control_points.numpy()  # (n, 2, order + 1, 3)
 
 fig, axes = plt.subplots(1, 2, figsize=(14, 6.2))
 colors = plt.cm.tab20(np.linspace(0, 1, 20))
@@ -53,6 +55,9 @@ for ax, (u, v, xl, yl) in zip(axes, [(0, 1, "x [m]", "y [m]"), (0, 2, "x [m]", "
         c = colors[i % 20]
         if quintic[i]:
             ax.plot(q_path[i, :, u], q_path[i, :, v], color=c, lw=1.4, ls="--", alpha=0.9)
+            if args.spatial_order > 1:  # control polygons
+                for seg in control[i]:
+                    ax.plot(seg[:, u], seg[:, v], ":", color=c, lw=0.8, alpha=0.6, marker=".", ms=3)
             ax.plot(waypoints[i, 1, u], waypoints[i, 1, v], "D", color=c, ms=4)
             ax.plot(waypoints[i, 2, u], waypoints[i, 2, v], "*", color=c, ms=8)
         elif moving[i]:
@@ -80,7 +85,7 @@ axes[1].axhline(0.0, color="k", lw=1)
 axes[1].set_title("Side view; dashed = max reach, dotted = min radius from the shoulder")
 axes[0].legend(loc="upper right"); axes[1].legend(loc="upper right")
 axes[1].set_ylim(-0.05, 1.5)
-fig.suptitle(f"Reference trajectories in world coordinates (base spawns at the origin, difficulty {args.difficulty})")
+fig.suptitle(f"Reference trajectories in world coordinates (base spawns at the origin, difficulty {args.difficulty}, quintic path order {args.spatial_order}; dotted = control polygons)")
 fig.tight_layout()
 Path(args.out).parent.mkdir(parents=True, exist_ok=True)
 fig.savefig(args.out, dpi=130)
