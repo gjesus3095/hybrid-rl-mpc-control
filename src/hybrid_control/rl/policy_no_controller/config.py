@@ -44,7 +44,13 @@ def load_configuration(config_path=None, checkpoint=None):
         env_path, agent_path = directory/'env.yaml', directory/'agent.yaml'
         if not env_path.is_file() or not agent_path.is_file():
             raise ValueError('moving-mass checkpoints require params/env.yaml and params/agent.yaml')
-        return load_env_cfg(yaml.safe_load(env_path.read_text())), yaml.safe_load(agent_path.read_text())
+        values = yaml.safe_load(env_path.read_text())
+        # Checkpoints saved before this option always consumed upper-joint velocities.
+        # Preserve their input dimensions and ordering without rewriting saved YAML.
+        values.setdefault('observation', {}).setdefault('upper_joint_velocities', True)
+        values['observation'].setdefault('upper_joint_positions', True)
+        values['observation'].setdefault('aggregate_physical_params', False)
+        return load_env_cfg(values), yaml.safe_load(agent_path.read_text())
     cfg = load_env_cfg(yaml.safe_load(Path(config_path).read_text())) if config_path else StabilizationEnvCfg()
     return cfg, make_runner_cfg()
 

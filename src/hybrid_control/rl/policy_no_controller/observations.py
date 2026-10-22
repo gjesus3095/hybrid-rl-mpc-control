@@ -12,8 +12,11 @@ import torch
 
 @dataclass(frozen=True)
 class ObservationCfg:
-    physical_params_in_actor: bool = True  # footprint, masses, terminal mass, COM height; the critic always sees them
+    physical_params_in_actor: bool = True  # physical parameters selected below; the critic always sees them
     com_offset_in_actor: bool = True  # com_offset_norm (rho); the critic always sees it
+    upper_joint_velocities: bool = False  # include in both actor and critic; legacy checkpoints used True
+    upper_joint_positions: bool = False  # legacy moving-mass checkpoints used True
+    aggregate_physical_params: bool = True  # footprint, base mass/CoM height, total mass; no individual upper masses
 
 
 @dataclass
@@ -31,7 +34,7 @@ class Snapshot:
     joint_pos: torch.Tensor  # (N, 3), rad/rad/m
     joint_vel: torch.Tensor  # (N, 3), rad/s, rad/s, m/s
     half_size: torch.Tensor  # (N, 2) half footprint length, width
-    params: torch.Tensor  # (N, P) [length, width, base_mass, base_com_z, terminal_mass, carriage_mass, gimbal_mass, mast_mass, total_mass]
+    params: torch.Tensor  # (N, 9) legacy masses, or (N, 5) [length, width, base_mass, base_com_z, total_mass]
     last_action: torch.Tensor  # (N, 3)
 
 
@@ -69,12 +72,22 @@ def observation_terms(snap: Snapshot, cfg: ObservationCfg) -> tuple[dict[str, to
         "base_ang_vel": to_base_frame(snap.yaw, snap.ang_vel_w),  # (wx, wy) = roll/pitch rates, wz = yaw rate
         "roll": snap.roll[:, None],
         "pitch": snap.pitch[:, None],
-        "joint_pos": snap.joint_pos,
-        "joint_vel": snap.joint_vel,
-        "last_action": snap.last_action,
     }
+    if cfg.upper_joint_positions:
+        actor["joint_pos"] = snap.joint_pos
+    if cfg.upper_joint_velocities:
+        actor["joint_vel"] = snap.joint_vel
+    actor["last_action"] = snap.last_action
+    params = snap.params
+    if cfg.aggregate_physical_params:
+        if params.shape[-1] == 9:
+            params = params[:, [0, 1, 2, 3, 8]]
+        elif params.shape[-1] != 5:
+            raise ValueError('aggregate physical parameters require 5 shared or 9 legacy values')
+    elif params.shape[-1] != 9:
+        raise ValueError('legacy physical parameters require 9 values')
     if cfg.physical_params_in_actor:
-        actor["physical_params"] = snap.params
+        actor["physical_params"] = params
     if cfg.com_offset_in_actor:
         actor["com_offset_norm"] = com_offset_norm(snap)[:, None]
 
@@ -83,7 +96,7 @@ def observation_terms(snap: Snapshot, cfg: ObservationCfg) -> tuple[dict[str, to
         critic["com_offset_norm"] = com_offset_norm(snap)[:, None]
     critic["mechanism_com"] = to_base_frame(snap.yaw, snap.com_mechanism - centre3)
     if not cfg.physical_params_in_actor:
-        critic["physical_params"] = snap.params
+        critic["physical_params"] = params
     return actor, critic
 
 

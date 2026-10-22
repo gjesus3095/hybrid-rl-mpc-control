@@ -23,7 +23,7 @@ class RewardCfg:
     w_com: float = RidgebackRewardCfg.w_com
     com_sigma: float = RidgebackRewardCfg.com_sigma
     com_deadzone: float = RidgebackRewardCfg.com_deadzone  # rho below which the com reward is constant (its value at rho = deadzone)
-    w_tilt: float = RidgebackRewardCfg.w_tilt  # (roll^2 + pitch^2) / tilt_scale^2; penalizes platform lean before the tip threshold
+    w_tilt: float = -1  # (roll^2 + pitch^2) / tilt_scale^2; penalizes platform lean before the tip threshold
     tilt_scale: float = RidgebackRewardCfg.tilt_scale  # [rad]
     termination_penalty: float = RidgebackRewardCfg.termination_penalty  # on the step the platform tips (not on time-outs)
     # --- penalties on base motion: slow, smooth corrections ---

@@ -125,16 +125,46 @@ per-environment episode count to sample matching disturbances despite different
 failure times. Physics reproducibility remains backend/device dependent.
 
 The actor sees current total CoM, normalized footprint offset, base velocity,
-angular velocity, tilt, joint positions/velocities, previous action, and physical
-parameters (31 inputs by default). The critic also sees mechanism CoM (34 inputs).
+angular velocity, tilt, previous action, and shared physical parameters
+(21 inputs by default). The critic also sees upper-body CoM (24 inputs).
+Both upper-joint positions and velocities are excluded from both networks.
+The five physical parameters are footprint length/width [m], base-link mass [kg],
+base-link local CoM height [m], and total robot mass [kg]. Individual upper-body
+masses are excluded. CoM positions and velocities use the same yaw-aligned,
+gravity-upright footprint frame on both robots.
+The saved options are `upper_joint_positions: false`, `upper_joint_velocities: false`,
+and `aggregate_physical_params: true` under `observation`. Playback/resume of older
+checkpoints retains their original layout (31/34 or 28/31 inputs); training the
+shared interface requires a fresh run, not resuming an old checkpoint.
 Neither sees future spline targets. Rewards encourage stability and penalize
 base motion and abrupt actions; there are no end-effector or trajectory tracking
-rewards. Episodes fail at 0.5 rad roll/pitch, including a tip on the timeout step.
-Footprint excursions are reported but permit recovery. A timeout without tipping
-remains eligible for value bootstrapping.
+rewards. Episodes fail when absolute roll/pitch exceeds 0.5 rad or the projected
+CoM leaves the rectangular footprint (normalized offset > 1). Footprint excursions
+are latched at each physics step until reset. Either failure takes precedence over
+a simultaneous timeout for value bootstrapping; only a timeout without failure
+remains eligible. This rule also applies when evaluating existing checkpoints.
 
 Base translation cannot directly recenter a mass prescribed relative to the base.
 This task evaluates dynamic disturbance rejection through acceleration and tilt.
+
+After fresh training, evaluate that checkpoint on Panda with its arm controller:
+
+```bash
+$ISAACLAB_PYTHON scripts/isaac/no_controller/play_panda_transfer.py \
+    --checkpoint logs/shared_base/model_1499.pt --controller ik_qp \
+    --num_envs 1 --episodes 10 --upward --viz kit --device cuda:0
+```
+
+The evaluator restores the saved network, observation normalization, physics/policy
+timing, base velocity limits and force-tracker settings. It computes shared inputs
+from Panda's measured state, without substituting fake joint values. `--upward`
+selects world-frame targets above the shoulder; the arm starts folded and blends
+into tracking. Omit it for the normal target distribution. `--controller impedance`
+selects the alternative arm controller. Panda uses its own payload range (0.8–3 kg)
+and the checkpoint's platform randomization. Add `--zero_policy` with the same seed
+for a baseline. Failure counts distinguish tips and footprint excursions (which may
+overlap). Shared input compatibility does not guarantee successful physical transfer.
+
 A short successful training run only verifies the training pipeline; compare
 survival, tilt, and motion against the seeded zero-command baseline before
 claiming a learned stabilization benefit.

@@ -7,6 +7,7 @@ Usage (from the repo root, after the Isaac Lab setup in the root README):
         --checkpoint logs/moving_mass_policy/<run>/model_499.pt
 
 Add ``--video`` to record an mp4 to out/play_moving_mass.mp4 (default path).
+Add ``--viz kit`` for an interactive viewport with CoM markers and timeline pause/resume.
 """
 import argparse
 from pathlib import Path
@@ -49,26 +50,27 @@ def main():
     torch.manual_seed(args.seed)
     sim_cfg = sim_utils.SimulationCfg(dt=cfg.physics_dt, device=args.device)
     with launch_simulation(sim_cfg, args):
-        if args.video:
+        sim = SimulationContext(sim_cfg)
+        if args.video or sim.has_active_visualizers():
             from hybrid_control.sim_interfaces.isaac.moving_mass.env import MovingMassEnv
             from hybrid_control.rl.policy_no_controller.env import BaseStabilizationEnv
             from hybrid_control.sim_interfaces.isaac.moving_mass.viz import DemoView
             base = MovingMassEnv(cfg.domain_randomization.sample_many(args.num_envs, args.seed),
-                                 SimulationContext(sim_cfg), spacing=args.spacing,
+                                 sim, spacing=args.spacing,
                                  friction=cfg.friction, tau=cfg.base_time_constant,
                                  max_force=cfg.max_base_force, mechanism=cfg.mechanism)
             view = DemoView(base, args)
             base.start()
             env = BaseStabilizationEnv(base, cfg, args.seed)
         else:
-            env = create_environment(SimulationContext(sim_cfg), cfg, args.num_envs, args.spacing, args.seed)
+            env = create_environment(sim, cfg, args.num_envs, args.spacing, args.seed)
             base = env.env
             view = None
 
         env.auto_reset = False
         policy = None
         try:
-            if args.video:
+            if view is not None:
                 view.start()
             if not args.zero_policy:
                 runner = OnPolicyRunner(env, runner_cfg, log_dir=None, device=str(env.device))
@@ -81,7 +83,7 @@ def main():
             labels = [f'env {i}' for i in range(env.num_envs)]
             t = 0.0
             with torch.inference_mode():
-                while (counts < args.episodes).any():
+                while sim.is_running() and (counts < args.episodes).any():
                     active = counts < args.episodes
                     action = torch.zeros(env.num_envs, 3, device=env.device) if policy is None else policy(obs)
                     action[~active] = 0
@@ -104,8 +106,11 @@ def main():
                     if len(ids):
                         env._reset_idx(ids)
                         obs = env._compute_obs()
-            total = args.episodes * env.num_envs
-            print(f'[RESULT] {total} episodes, {failures} failed, survival {1-failures/total:.3f}, mean duration {total_length/total:.2f}s')
+            total = int(counts.sum())
+            if total:
+                print(f'[RESULT] {total} episodes, {failures} failed, survival {1-failures/total:.3f}, mean duration {total_length/total:.2f}s')
+            else:
+                print('[RESULT] No completed episodes.')
             print('[METRICS]', {k: v/max(samples, 1) for k, v in sums.items()})
             if args.video:
                 print(f'[INFO] Video: {args.video_path}')

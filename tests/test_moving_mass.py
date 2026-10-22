@@ -82,12 +82,93 @@ def test_observations_are_current_state_only_and_frame_consistent():
     s.yaw[:] = math.pi/2
     s.com_total[:, 0] = .1
     actor, critic = observe(s, ObservationCfg())
-    assert actor.shape == (2, 31) and critic.shape == (2, 34)
+    assert actor.shape == (2, 21) and critic.shape == (2, 24)
     terms, _ = observation_terms(s, ObservationCfg())
     assert torch.allclose(terms['com_total'][:, 1], torch.full((2,), -.1))
     assert not any('ref' in x or 'ee' in x for x in terms)
     hidden_actor, hidden_critic = observe(s, ObservationCfg(physical_params_in_actor=False, com_offset_in_actor=False))
-    assert hidden_actor.shape == (2, 21) and hidden_critic.shape == critic.shape
+    assert hidden_actor.shape == (2, 15) and hidden_critic.shape == critic.shape
+
+
+def test_upper_joint_velocities_excluded_from_both_observations_by_default():
+    s = snapshot()
+    before = observe(s, ObservationCfg())
+    s.joint_vel[:] = torch.tensor([1., 2., 3.])
+    after = observe(s, ObservationCfg())
+    assert all(torch.equal(a, b) for a, b in zip(before, after))
+    actor, critic = observation_terms(s, ObservationCfg())
+    assert 'joint_vel' not in actor and 'joint_vel' not in critic
+    legacy = observe(s, ObservationCfg(upper_joint_velocities=True))
+    assert legacy[0].shape == (2, 24) and legacy[1].shape == (2, 27)
+    for old, new in zip(legacy, after):
+        assert torch.equal(old[:, 12:15], s.joint_vel)
+        assert torch.equal(torch.cat((old[:, :12], old[:, 15:]), dim=1), new)
+
+
+def test_shared_observations_ignore_upper_joints_and_individual_masses():
+    s = snapshot()
+    s.params[:] = torch.tensor([.4, .3, 10., .1, 3., 1., .2, .4, 14.6])
+    before = observe(s, ObservationCfg())
+    s.joint_pos[:] = 1.2
+    s.joint_vel[:] = -2.5
+    s.params[:, 4:8] += 5  # Only the explicitly supplied total mass is part of the shared interface.
+    after = observe(s, ObservationCfg())
+    assert all(torch.equal(a, b) for a, b in zip(before, after))
+    actor, _ = observation_terms(s, ObservationCfg())
+    assert 'joint_pos' not in actor and 'joint_vel' not in actor
+    assert torch.equal(actor['physical_params'], s.params[:, [0, 1, 2, 3, 8]])
+
+
+@pytest.mark.parametrize('physical,offset', [(True, True), (False, True), (True, False), (False, False)])
+def test_panda_and_moving_mass_observations_match(physical, offset):
+    from types import SimpleNamespace
+    from hybrid_control.rl.policy_no_controller.panda_observations import observe_panda
+    s = snapshot()
+    s.yaw[:] = torch.tensor([.6, -1.2])
+    s.centre_xy[:] = torch.tensor([[2., 3.], [-1., 4.]])
+    s.com_total[:] = torch.tensor([[2.1, 3.2, .7], [-.8, 3.9, .5]])
+    s.com_mechanism[:] = s.com_total + .1
+    s.lin_vel_w[:] = .2
+    s.ang_vel_w[:] = .3
+    s.last_action[:] = -.4
+    s.params[:] = torch.tensor([.4, .3, 10., .1, 3., 1., .2, .4, 14.6])
+    panda = SimpleNamespace(**vars(s))
+    panda.com_arm = s.com_mechanism
+    panda.params = s.params[:, [0, 1, 2, 3, 4, 8]]
+    cfg = ObservationCfg(physical_params_in_actor=physical, com_offset_in_actor=offset)
+    assert all(torch.equal(a, b) for a, b in zip(observe(s, cfg), observe_panda(panda, cfg)))
+    for incompatible in (ObservationCfg(upper_joint_positions=True),
+                         ObservationCfg(upper_joint_velocities=True),
+                         ObservationCfg(aggregate_physical_params=False)):
+        with pytest.raises(ValueError, match='freshly trained'):
+            observe_panda(panda, incompatible)
+
+
+@pytest.mark.parametrize('saved_velocities,actor_dim', [(None, 31), (False, 28)])
+def test_legacy_checkpoint_restores_upper_joint_velocities_without_modifying_yaml(tmp_path, saved_velocities, actor_dim):
+    pytest.importorskip('rsl_rl')
+    import yaml
+    from hybrid_control.rl.policy_no_controller.config import load_configuration
+    from hybrid_control.rl.policy_no_controller.env import StabilizationEnvCfg
+    values = asdict(StabilizationEnvCfg())
+    del values['observation']['upper_joint_velocities']
+    del values['observation']['upper_joint_positions']
+    del values['observation']['aggregate_physical_params']
+    if saved_velocities is not None:
+        values['observation']['upper_joint_velocities'] = saved_velocities
+    directory = tmp_path / 'params'
+    directory.mkdir()
+    saved = yaml.safe_dump(values)
+    (directory / 'env.yaml').write_text(saved)
+    (directory / 'agent.yaml').write_text('{}')
+    cfg, _ = load_configuration(checkpoint=str(tmp_path / 'model_0.pt'))
+    assert cfg.observation.upper_joint_velocities == (saved_velocities is None)
+    assert cfg.observation.upper_joint_positions and not cfg.observation.aggregate_physical_params
+    assert observe(snapshot(), cfg.observation)[0].shape == (2, actor_dim)
+    assert (directory / 'env.yaml').read_text() == saved
+    # A YAML passed for a fresh run uses the new default instead.
+    fresh, _ = load_configuration(config_path=str(directory / 'env.yaml'))
+    assert not fresh.observation.upper_joint_velocities
 
 
 def test_rewards_penalize_tilt_motion_and_failure_without_tracking():
@@ -98,6 +179,45 @@ def test_rewards_penalize_tilt_motion_and_failure_without_tracking():
     assert reward[0] > reward[1]
     assert terms['termination'][1] == -10
     assert not {'track', 'centre', 'progress'} & terms.keys()
+
+
+def test_shared_checkpoint_loads_for_panda_inference(tmp_path):
+    pytest.importorskip('rsl_rl')
+    import yaml
+    from types import SimpleNamespace
+    from tensordict import TensorDict
+    from rsl_rl.runners import OnPolicyRunner
+    from hybrid_control.rl.config import make_runner_cfg
+    from hybrid_control.rl.policy_no_controller.config import load_configuration
+    from hybrid_control.rl.policy_no_controller.env import StabilizationEnvCfg
+    from hybrid_control.rl.policy_no_controller.panda_observations import observe_panda
+
+    s = snapshot()
+    s.params[:, [0, 1, 2, 3, 8]] = torch.tensor([.4, .4, 10., .1, 15.])
+    actor, critic = observe(s, ObservationCfg())
+    obs = TensorDict({'actor': actor, 'critic': critic}, batch_size=[2])
+    fake = SimpleNamespace(num_envs=2, num_actions=3, cfg={}, get_observations=lambda: obs)
+    agent = make_runner_cfg()
+    original = OnPolicyRunner(fake, agent, log_dir=None, device='cpu')
+    checkpoint = tmp_path / 'model_0.pt'
+    original.save(str(checkpoint))
+    (tmp_path / 'params').mkdir()
+    (tmp_path / 'params/env.yaml').write_text(yaml.safe_dump(asdict(StabilizationEnvCfg())))
+    (tmp_path / 'params/agent.yaml').write_text(yaml.safe_dump(agent))
+    cfg, restored_agent = load_configuration(checkpoint=str(checkpoint))
+    panda = SimpleNamespace(**vars(s))
+    panda.com_arm = s.com_mechanism
+    panda.params = s.params[:, [0, 1, 2, 3, 4, 8]]
+    a, c = observe_panda(panda, cfg.observation)
+    panda_obs = TensorDict({'actor': a, 'critic': c}, batch_size=[2])
+    fake.get_observations = lambda: panda_obs
+    restored = OnPolicyRunner(fake, restored_agent, log_dir=None, device='cpu')
+    restored.load(str(checkpoint))
+    with torch.inference_mode():
+        actual = restored.get_inference_policy()(panda_obs)
+        expected = original.get_inference_policy()(obs)
+    assert actual.shape == (2, 3) and torch.isfinite(actual).all()
+    assert torch.equal(actual, expected)
 
 
 def test_mass_randomization_preserves_footprint():

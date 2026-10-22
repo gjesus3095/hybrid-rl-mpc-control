@@ -90,7 +90,7 @@ class MovingMassEnv:
         self.inertia_z[ids] = robot.data.body_inertia.torch[ids, self.base_id, 8]
 
     def reset(self, env_ids: torch.Tensor | None = None, dynamics: list[MovingMassParams] | None = None):
-        """Back to the upright mechanism at the env origins; the tipped latch is cleared.
+        """Back to the upright mechanism at the env origins; failure latches are cleared.
 
         env_ids: envs to reset (all if None).
         dynamics: optional new ``MovingMassParams`` per reset env (``dynamics[k]`` for ``env_ids[k]``). Only mass, COM
@@ -179,7 +179,8 @@ class MovingMassEnv:
         rel = self.com_total[:, :2] - centre
         dx, dy = c * rel[:, 0] + s * rel[:, 1], -s * rel[:, 0] + c * rel[:, 1]  # base-frame offsets
         self.com_offset = torch.maximum(dx.abs() / self.half_length, dy.abs() / self.half_width) * self.half_length
-        self.left_footprint = self.com_offset > self.half_length
+        # Preserve excursions between policy updates, even if the CoM returns inside.
+        self.left_footprint |= self.com_offset > self.half_length
         self.tipped |= torch.maximum(self.roll.abs(), self.pitch.abs()) > TIP_ANGLE
         # Aggregate yaw inertia about the base CoM, including moving masses.
         x, y, z, w = robot.data.body_com_quat_w.torch.unbind(-1)

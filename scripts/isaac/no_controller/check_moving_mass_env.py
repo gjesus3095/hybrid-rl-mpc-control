@@ -76,7 +76,7 @@ def main():
                     robot.data.body_pos_w.torch[:, base.base_id], robot.data.body_quat_w.torch[:, base.base_id],
                     base.params, cfg.mechanism)
                 assert torch.allclose(base.com_total, expected, atol=1e-4), 'moving analytical CoM mismatch'
-                assert not extras['failed'].any(), 'easy baseline tipped'
+                assert not extras['failed'].any(), 'easy baseline tipped or left footprint'
             assert done.all() and extras['time_outs'].all()
             assert (max_error[:2] < .05).all() and max_error[2] < .02, max_error
             assert max_speed > 1e-6, 'moving mechanism caused no measurable base response'
@@ -93,6 +93,32 @@ def main():
             print('[CHECK] partial reset leaves neighboring states, trajectories and clocks unchanged')
 
             env.auto_reset = True
+            # Exercise an excursion between policy updates without reaching the tilt threshold.
+            for at_timeout in (False, True):
+                env._reset_idx(torch.arange(env.num_envs, device=env.device))
+                upright = robot.data.root_pose_w.torch.clone()
+                pose = upright.clone()
+                pose[:, 3:] = torch.tensor([.04997917, 0, 0, .99875026], device=env.device)  # roll 0.1
+                half_length, half_width = base.half_length.clone(), base.half_width.clone()
+                base.half_length.fill_(1e-5)
+                base.half_width.fill_(1e-5)
+                robot.write_root_pose_to_sim_index(root_pose=pose)
+                base._update_state()
+                assert base.left_footprint.all() and not base.tipped.any()
+                base.half_length.copy_(half_length)
+                base.half_width.copy_(half_width)
+                robot.write_root_pose_to_sim_index(root_pose=upright)
+                base._update_state()
+                assert (base.com_offset <= base.half_length).all()
+                assert base.left_footprint.all(), 'excursion must remain latched until reset'
+                if at_timeout:
+                    env.episode_length_buf[:] = env.max_episode_length-1
+                _, _, done, extras = env.step(zero)
+                assert done.all() and extras['failed'].all() and not extras['time_outs'].any()
+                assert not env.episode_length_buf.any()
+                assert not base.left_footprint.any(), 'automatic reset must clear footprint latch'
+            print('[CHECK] footprint-only failure is latched, terminates, overrides timeout and clears on reset')
+
             env._reset_idx(torch.arange(env.num_envs, device=env.device))
             # Force physical tip on the timeout step: failure must win over bootstrap.
             env.episode_length_buf[:] = env.max_episode_length-1

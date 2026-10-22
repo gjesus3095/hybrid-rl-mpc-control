@@ -6,7 +6,7 @@ the mechanism's joint targets are read from the spline and passed directly to th
 is no arm controller: the 3-DoF mechanism (roll, pitch, lift) is driven purely by the spline, and the
 policy has to learn where to move the base so the total COM stays inside the platform footprint.
 
-Episodes end when the platform tips (|roll| or |pitch| exceeds the threshold) or on time-out. Finished envs are
+Episodes end when the platform tips, its CoM leaves the footprint, or on time-out. Finished envs are
 reset individually with freshly sampled dynamics (platform mass, COM height, terminal mass; the footprint is fixed
 per env slot) and a fresh random spline trajectory.
 """
@@ -30,7 +30,7 @@ class StabilizationEnvCfg:
     physics_dt: float = 1 / 120  # 120 Hz physics
     decimation: int = 4  # physics steps per policy step (120 Hz physics -> 30 Hz policy)
     episode_length_s: float = 15.0
-    max_base_speed: tuple[float, float, float] = (1.0, 1.0, 0.6)  # |vx|, |vy| [m/s], |wz| [rad/s] at action = +-1
+    max_base_speed: tuple[float, float, float] = (2.0, 2.0, 0.6)  # |vx|, |vy| [m/s], |wz| [rad/s] at action = +-1
     friction: float = 0.05  # virtual base actuator: ground friction coefficient
     base_time_constant: float = 0.15  # virtual base actuator: first-order velocity-tracking time constant [s]
     max_base_force: float = 1000.0  # virtual base actuator: maximum planar force and yaw torque [N / N·m]
@@ -112,7 +112,7 @@ class BaseStabilizationEnv(VecEnv):
             env.step(q, action * self.max_vel, qd)
         self.episode_length_buf += 1
         timeout = self.episode_length_buf >= self.max_episode_length
-        failed = env.tipped.clone()
+        failed = env.tipped | env.left_footprint
         terminated = failed & ~timeout  # a time-out on the same step is not counted as a failure
         dones = failed | timeout
         # Reward inputs.
