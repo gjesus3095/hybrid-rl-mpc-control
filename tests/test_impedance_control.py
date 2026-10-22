@@ -15,6 +15,7 @@ from hybrid_control.sim_interfaces.mujoco.modifier import MujocoModifier
 from hybrid_control.utils.trajectories import (
     QuinticTrajectory,
     SinusoidalTrajectory,
+    align_quaternion_signs,
     quintic_time_scaling,
 )
 
@@ -79,6 +80,25 @@ def test_quintic_trajectory_derivatives_match_finite_differences():
     np.testing.assert_allclose(end.pose.position, goal.position)
     assert abs(np.dot(end.pose.quaternion, goal.quaternion)) == pytest.approx(1.0)
     np.testing.assert_array_equal(end.velocity, np.zeros(6))
+
+
+def test_aligned_quintic_chain_has_no_quaternion_sign_jumps():
+    down = Rotation.from_euler("xyz", [180, 0, 0], degrees=True)
+    rotations = [down, Rotation.from_rotvec([0.3, -0.2, 0.5]) * down, Rotation.from_rotvec([-0.4, 0.1, -0.6]) * down]
+    signs = (1.0, -1.0, 1.0)  # the middle waypoint is given with the opposite sign: same rotation
+    poses = [Pose([0.5, 0.0, 0.5 + 0.05 * k], s * r.as_quat()) for k, (s, r) in enumerate(zip(signs, rotations))]
+
+    def boundary_dot(waypoints):
+        first = QuinticTrajectory(waypoints[0], waypoints[1], 1.0)
+        second = QuinticTrajectory(waypoints[1], waypoints[2], 1.0)
+        return np.dot(first.sample(1.0).pose.quaternion, second.sample(0.0).pose.quaternion)
+
+    assert boundary_dot(poses) == pytest.approx(-1.0)  # unaligned: a sign jump at the boundary
+    aligned = align_quaternion_signs(poses)
+    assert boundary_dot(aligned) == pytest.approx(1.0)
+    for original, new in zip(poses, aligned):  # same rotations and positions
+        assert abs(np.dot(original.quaternion, new.quaternion)) == pytest.approx(1.0)
+        np.testing.assert_array_equal(original.position, new.position)
 
 
 def test_sinusoidal_trajectory_derivatives_match_finite_differences():

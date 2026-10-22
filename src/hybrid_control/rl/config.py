@@ -27,14 +27,40 @@ def saved_controller(checkpoint: str, default: str = "ik_qp") -> str:
     return _saved_env_cfg(checkpoint).get("controller", default)
 
 
+def qp_solver_name(controller: str, ik_qp_solver: str) -> str:
+    """QP backend the arm controller solves with: ``ik_qp`` uses ``IKCfg.qp_solver``, ``impedance`` always uses OSQP
+    (its ``IKCfg.qp_solver`` is unused); ``"none"`` for a controller without a QP."""
+    return {"ik_qp": ik_qp_solver, "impedance": "osqp"}.get(controller, "none")
+
+
+def saved_qp_solver(checkpoint: str) -> str:
+    """QP backend a checkpoint was trained with (see ``qp_solver_name``). Runs from before ``IKCfg.qp_solver`` existed
+    solved the Pink IK with OSQP (the controller's default then)."""
+    saved = _saved_env_cfg(checkpoint)
+    return qp_solver_name(saved.get("controller", "ik_qp"), (saved.get("ik") or {}).get("qp_solver", "osqp"))
+
+
 def saved_observation_cfg(checkpoint: str) -> ObservationCfg:
     """Observation config a checkpoint was trained with, so its network input size matches. Options missing from an
     older ``env.yaml`` take the value they had before they existed (``com_offset_in_actor``: False)."""
     from hybrid_control.rl.policy_with_controller.observations import ObservationCfg
 
-    saved = {"com_offset_in_actor": False, **_saved_env_cfg(checkpoint).get("observation", {})}
+    saved = {"com_offset_in_actor": False, "ref_orientation_in_actor": False,
+             **_saved_env_cfg(checkpoint).get("observation", {})}
     names = {f.name for f in dataclasses.fields(ObservationCfg)}
     return ObservationCfg(**{k: tuple(v) if isinstance(v, list) else v for k, v in saved.items() if k in names})
+
+
+def saved_spatial_order(checkpoint: str) -> int:
+    """Bezier order of the quintic trajectories' paths a checkpoint was trained with (``trajectory.spatial_order`` in
+    ``env.yaml``); runs from before the option used straight segments (1)."""
+    return int((_saved_env_cfg(checkpoint).get("trajectory") or {}).get("spatial_order", 1))
+
+
+def saved_max_base_speed(checkpoint: str) -> tuple[float, float, float] | None:
+    """Base speeds at action +-1 a checkpoint was trained with (``max_base_speed`` in ``env.yaml``), or None if unknown."""
+    speed = _saved_env_cfg(checkpoint).get("max_base_speed")
+    return tuple(float(v) for v in speed) if speed else None
 
 
 def make_runner_cfg(

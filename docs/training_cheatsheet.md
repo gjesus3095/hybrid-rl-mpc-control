@@ -28,7 +28,7 @@ $PY $R/scripts/isaac/with_controller/train_base_policy.py --num_envs 256 --qp_wo
 - Logs and checkpoints go to `$R/logs/base_policy/<timestamp>/` (or `--log_dir`): `model_<iter>.pt` every 50 iterations
   plus the last one, and the TensorBoard event file. `logs/` is gitignored.
 - Resume: add `--resume <dir>/model_<iter>.pt`.
-- Other flags: `--seed`, `--num_steps_per_env` (24), `--difficulty` (trajectory amplitude/speed, 0..1),
+- Other flags: `--seed`, `--num_steps_per_env` (24), `--difficulty` (trajectory amplitude/speed, 0..1), `--spatial_order` (Bezier order of the quintic paths, 1 = straight; play defaults to the checkpoint's),
   `--ik_every` (physics steps per QP update, must divide 4), `--spacing`.
 - Speed: about 3000 env-steps/s at 256 envs with `--qp_workers 48`. The QP is the bottleneck, so more envs need more
   workers (up to the number of free cores; the machine has 104). `--qp_workers 0` solves serially (about 10x slower).
@@ -56,6 +56,42 @@ $PY $R/scripts/isaac/with_controller/play_base_policy.py --checkpoint $CK --num_
 $PY $R/scripts/isaac/with_controller/play_base_policy.py --checkpoint $CK --num_envs 128 --episodes 3 --qp_workers 32 --zero_policy
 ```
 
+## Benchmark (deterministic evaluation set)
+
+Five sets of 100 scenarios, identical for every policy (`src/hybrid_control/rl/evaluation/`): `fixed`, `sine`, `poly`
+(training-style), `poly_far` (quintic whose B is 0.9-2 m from the arm base, outside the 0.8 m training reach, A -> B timed
+at the training mean speed 0.25 m/s) and `rigid` (constant-speed straight legs, 0 / 1 / 2 rounded 90 degree bends, inside the
+training workspace). Slot `j` has footprint `j` in every set; each scenario has its own mass / payload.
+
+`fixed`, `sine` and `rigid` only contain references that the arm can follow from the spawn pose **with a fixed base**
+(`evaluation/reachability.py`: continuous IK along the timed reference with orientation held, joint limits with a 0.05 rad
+margin and joint speeds below 70 % of the Panda limits; candidates are redrawn until 100 pass). `poly` and `ellipse` were
+checked the same way and pass; `poly_far` is outside the arm's reach on purpose. On a welded base the three filtered sets
+track to 0.1-0.6 cm RMS (zero policy, impedance controller, no payload).
+
+```bash
+# print the benchmark fingerprint and statistics, plot it (no Isaac needed)
+PYTHONPATH=$R/src python3 $R/scripts/generate_eval_set.py --plot $R/out/eval/benchmark.png
+# play a policy on it (about 10 min); logs + summary.json go to out/eval/<run>_<model>/
+$PY $R/scripts/isaac/evaluate_policy.py --checkpoint $CK --qp_workers 32
+$PY $R/scripts/isaac/evaluate_policy.py --zero_policy --qp_workers 32      # baseline
+# welded base (cannot move or tip, nothing terminates; COM-margin violations are counted as "would have failed")
+$PY $R/scripts/isaac/evaluate_policy.py --zero_policy --fixed_base --controller impedance --qp_workers 32
+# several payloads in one process, one folder per payload; --name sets the output folder out/eval/<name>
+$PY $R/scripts/isaac/evaluate_policy.py --checkpoint $CK --payloads 0 1.5 3 --qp_workers 32 --name <name>
+# smoke test: first 8 scenarios of one set (same scenarios as in the full run)
+$PY $R/scripts/isaac/evaluate_policy.py --checkpoint $CK --sets poly_far --num_scenarios 8 --qp_workers 8
+# poly / poly_far along Bezier paths of order 3 under the quintic time scaling (as training --spatial_order 3);
+# default 1 = straight segments, other orders go to out/eval/<run>_<model>_order<n>/
+$PY $R/scripts/isaac/evaluate_policy.py --checkpoint $CK --spatial_order 3 --sets poly poly_far --qp_workers 32
+# every metric of one or more runs in one text file
+python3 $R/scripts/make_eval_summary.py $R/out/eval/<run>_<model> $R/out/eval/<run>_<model>_order3 --out $R/out/eval_summary.txt
+```
+
+`<set>.npz` holds per-step arrays `(scenario, step, dim)` (see `LOG_FIELDS` in `evaluation/metrics.py`: reference, TCP pose
+and error, base state, COM and its margin to the footprint edge, arm joints, actions) plus `valid` (steps that count: within
+the scenario and up to the failure) and `fail_step`. Replays of the same policy are identical on this machine.
+
 ## Videos (written to `$R/out/`, not tracked by git)
 
 ```bash
@@ -66,6 +102,30 @@ $PY $R/scripts/isaac/with_controller/record_episodes_video.py --checkpoint $CK -
 ```
 
 Copy to your PC: `scp z8:/home/u0181636/hybrid-rl-mpc-control/out/<file>.mp4 .`
+
+## Chicken overlay (videos only)
+
+`--chicken` on `record_episodes_video.py` dresses every robot as a cartoon chicken: body on the base, head on the
+hand, beak on the fingers, and a neck tube that follows the arm. It is visual only, so physics, policy and QP behave
+exactly as without it. The Franka meshes are hidden under the skin.
+
+```bash
+# trained policy with the chicken skin
+$PY $R/scripts/isaac/record_episodes_video.py --checkpoint $CK --title "CHICKEN" --chicken \
+    --video_path $R/out/chicken_episodes.mp4
+# same, but the head looks ahead (TCP forward, 10 deg down, comb up) instead of the training orientation (TCP down);
+# out of the training distribution, so expect worse tracking/stability
+$PY $R/scripts/isaac/record_episodes_video.py --checkpoint $CK --title "CHICKEN" --chicken --head_forward \
+    --kinds quintic --view front --video_path $R/out/chicken_head_forward.mp4
+```
+
+- `--head_forward` only changes the quintic and sine targets; a fixed point keeps its spawn orientation, hence
+  `--kinds quintic` (or `quintic sine`) to make the head pose visible in every episode.
+- Still image of the skin (no policy, arm moved to a head-forward pose) -> `out/chicken_snapshot.png`:
+  `$PY $R/scripts/isaac/chicken_snapshot.py` (`--show_robot` keeps the Franka visible, `--eye`/`--target` move the camera).
+- The meshes and overlay URDF (`src/hybrid_control/sim_interfaces/isaac/assets/chicken/`) are generated; after
+  editing the parts in `scripts/make_chicken_assets.py`, regenerate them with
+  `cd $R && uv run python scripts/make_chicken_assets.py`.
 
 ## Checks and plots
 
@@ -85,7 +145,7 @@ cd $R && env -u PYTHONPATH uv run pytest -q
 |---|---|
 | Reward terms and weights | `RewardCfg` in `src/hybrid_control/rl/rewards.py` |
 | Platform randomization (size, mass, payload, hardness bias) | `DomainRandomization` in `src/hybrid_control/sim_interfaces/isaac/ridgeback/params.py` |
-| Reference trajectories (reach, directions, amplitude, speed) | `TrajectoryCfg` in `src/hybrid_control/rl/trajectories.py` |
+| Reference trajectories (reach, directions, amplitude, speed) | `TrajectoryCfg` in `src/hybrid_control/rl/policy_with_controller/trajectories.py` |
 | Control rate, episode length, base speed limits, QP gains | `StabilizationEnvCfg` / `IKCfg` in `src/hybrid_control/rl/env.py` |
 | Observations | `observe()` in `src/hybrid_control/rl/observations.py` |
 | PPO hyperparameters, network size | `make_runner_cfg()` in `src/hybrid_control/rl/config.py` |

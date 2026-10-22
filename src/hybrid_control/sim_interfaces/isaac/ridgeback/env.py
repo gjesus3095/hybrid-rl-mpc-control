@@ -7,11 +7,18 @@ The base is driven by a virtual velocity actuator -- a saturated first-order vel
 a planar force and yaw torque to ``base_link`` at ground height. Once an env has tipped the actuator is off.
 Failure criterion: the whole-robot COM leaves the platform footprint (``com_offset > half_length``), and
 ``tipped`` latches when roll or pitch exceeds ``TIP_ANGLE``.
+
+``fixed_base=True`` welds the platform to the world with a fixed joint (no planar motion, yaw or tilt), e.g. as a
+reference for how well the arm alone tracks. PhysX still treats the welded articulation as floating-base, so the
+Jacobian and mass-matrix arm blocks are unchanged (``n_base_dofs`` follows ``robot.is_fixed_base`` regardless). The
+failure flags are still computed from the physical COM, so ``left_footprint`` shows what would have happened on a free
+base; the base commands are ignored.
 """
 
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import torch
 
@@ -37,15 +44,19 @@ class RidgebackDREnv:
         friction: float = 0.05,
         tau: float = 0.15,
         max_force: float = 1000.0,
+        fixed_base: bool = False,
+        light_intensity: float = 3000.0,
     ):
         self.sim, self.params = sim, list(params)
+        self.fixed_base = fixed_base
+        self.n_base_dofs = 6  # base columns that precede the joint columns in Jacobians / dynamics (set in start())
         self.num_envs = len(params)
         self.tau, self.max_force = tau, max_force
         self.dt = sim.get_physics_dt()
 
         ground = sim_utils.GroundPlaneCfg()
         ground.func("/World/defaultGroundPlane", ground)
-        light = sim_utils.DistantLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75))
+        light = sim_utils.DistantLightCfg(intensity=light_intensity, color=(0.75, 0.75, 0.75))
         light.func("/World/Light", light)
 
         cols = num_cols or math.ceil(math.sqrt(self.num_envs))
@@ -58,7 +69,7 @@ class RidgebackDREnv:
         # Spawns one robot under every env_<i>, then each is reshaped with its own footprint.
         self.robot = Articulation(cfg=build_robot_cfg("/World/envs/env_.*/Robot", params[0].base_mass))
         for i, p in enumerate(params):
-            free_and_resize_base(f"/World/envs/env_{i}/Robot", p.footprint, friction)
+            free_and_resize_base(f"/World/envs/env_{i}/Robot", p.footprint, friction, fixed_base)
         self.half_length = torch.tensor([0.5 * p.footprint[0] for p in params], device=sim.device)
         self.half_width = torch.tensor([0.5 * p.footprint[1] for p in params], device=sim.device)
 
@@ -66,6 +77,7 @@ class RidgebackDREnv:
         """Reset the simulation, put every robot in its default pose and apply the mass model."""
         self.sim.reset()
         robot = self.robot
+        self.n_base_dofs = 0 if robot.is_fixed_base else 6  # a welded base is still a floating-base articulation to PhysX
         self.base_id = robot.find_bodies("base_link")[0][0]
         self.arm_body_ids = [i for i, n in enumerate(robot.body_names) if n.startswith("panda_")]
         self.platform_body_ids = [i for i, n in enumerate(robot.body_names) if not n.startswith("panda_")]
@@ -132,9 +144,18 @@ class RidgebackDREnv:
             self.left_footprint[ids] = False
         self._update_state()
 
+    def set_payload(self, env_ids: torch.Tensor, payloads: list[float]):
+        """Change the TCP payload [kg] of ``env_ids`` mid-episode (``payloads[k]`` for ``env_ids[k]``); the robot state
+        and the other parameters are untouched."""
+        ids = env_ids.to(self.robot.device).long()
+        for i, payload in zip(ids.tolist(), payloads):
+            self.params[i] = replace(self.params[i], payload=float(payload))
+        self.mass_model.set_params([self.params[i] for i in ids.tolist()], env_ids=ids)
+        self._refresh_mass_cache(ids)
+
     def gravity_compensation(self) -> torch.Tensor:
         """(N, 7) arm joint torques that hold the arm against gravity in its current configuration and base tilt."""
-        cols = [6 + i for i in self.arm_ids]  # the first 6 columns are the floating-base DoFs
+        cols = [self.n_base_dofs + i for i in self.arm_ids]  # floating base: the first 6 columns are its DoFs
         return self.robot.data.gravity_compensation_forces.torch[:, cols]
 
     def step(self, arm_q_target: torch.Tensor, base_cmd: torch.Tensor, arm_effort: torch.Tensor | None = None):

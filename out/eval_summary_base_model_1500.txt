@@ -1,0 +1,88 @@
+====================================================================================================
+base_model_1500  (out/eval/base_model_1500)
+====================================================================================================
+checkpoint: /home/u0110021/hybrid-rl-mpc-control/logs/base_/model_1500.pt
+zero_policy: False
+fixed_base: False
+controller: impedance
+payload_kg: None
+benchmark_seed: 2026
+scenarios_per_set: 100
+spatial_order: 1
+max_base_speed: [1.0, 1.0, 0.6]
+policy_dt: 0.03333333333333333
+git: 81a69b9+dirty
+date: 2026-10-16T10:46:48
+benchmark_fingerprint: a7355009e5dd
+set fingerprints: fixed cde9135c2a5d, sine 115b922e9048, poly 8e7176896c82, poly_far fe279e09bc65, rigid 0775340ad6f4, ellipse 7484d3b5a677
+
+set           n  fail%  pos rms  pos std  pos p95  ori rms   final rho mean  rho max min margin
+                           [cm]     [cm]     [cm]    [deg]    [cm]                         [cm]
+fixed       100    0.0     3.08     2.26     6.90     1.66    2.47    0.119    0.504       4.75
+sine        100    0.0     3.09     2.16     6.33     2.36    2.34    0.151    0.676       3.36
+poly        100    1.0     4.22     3.06     9.24     2.18    3.51    0.165    1.037      -0.36
+poly_far    100    0.0     3.98     3.10     9.39     2.04    2.33    0.171    0.926       0.70
+rigid       100    0.0     2.51     1.74     5.06     1.61    1.82    0.114    0.560       4.18
+ellipse     100    1.0     2.57     1.89     4.84     1.58    1.73    0.130    1.025      -0.26
+
+All metrics (pooled over the valid steps of all scenarios unless noted):
+  fixed: 100 scenarios, 0 failed (0.0 %); tipped 0, COM left the footprint 0; IK failures 0
+    position error [cm]: rms 3.08, mean 2.09, std 2.26, p95 6.90, max 16.91, completed_rms 3.08
+      per_scenario_rms: mean 2.38, std 1.95, median 1.63, max 10.66
+    orientation error [deg]: rms 1.66, mean 1.33, std 0.99, p95 3.22, max 5.91, completed_rms 1.66
+      per_scenario_rms: mean 1.58, std 0.53, median 1.49, max 3.01
+    final position error (last 0.5 s, completed scenarios) [cm]: mean 2.47, max 16.29
+    COM margin to the footprint edge [cm]: mean 11.18, std 3.66, min 4.75, per_scenario_min_mean 9.61, per_scenario_min_p5 5.59
+    COM offset rho (fraction of the half footprint, > 1 = outside): mean 0.119, std 0.081, max 0.504
+    base: mean speed 0.103 m/s, max speed 0.531 m/s, mean |yaw rate| 0.114 rad/s, max tilt 1.14 deg, max distance from spawn 1.05 m
+
+  sine: 100 scenarios, 0 failed (0.0 %); tipped 0, COM left the footprint 0; IK failures 0
+    position error [cm]: rms 3.09, mean 2.21, std 2.16, p95 6.33, max 15.81, completed_rms 3.09
+      per_scenario_rms: mean 2.62, std 1.64, median 2.08, max 8.63
+    orientation error [deg]: rms 2.36, mean 1.75, std 1.59, p95 4.72, max 14.75, completed_rms 2.36
+      per_scenario_rms: mean 2.15, std 0.97, median 2.04, max 4.99
+    final position error (last 0.5 s, completed scenarios) [cm]: mean 2.34, max 13.55
+    COM margin to the footprint edge [cm]: mean 10.89, std 3.91, min 3.36, per_scenario_min_mean 8.92, per_scenario_min_p5 4.72
+    COM offset rho (fraction of the half footprint, > 1 = outside): mean 0.151, std 0.105, max 0.676
+    base: mean speed 0.146 m/s, max speed 0.606 m/s, mean |yaw rate| 0.147 rad/s, max tilt 1.41 deg, max distance from spawn 1.06 m
+
+  poly: 100 scenarios, 1 failed (1.0 %), mean failure time 4.53 s; tipped 1, COM left the footprint 1; IK failures 0
+    position error [cm]: rms 4.22, mean 2.90, std 3.06, p95 9.24, max 21.83, completed_rms 4.08
+      per_scenario_rms: mean 3.41, std 2.50, median 2.47, max 11.95
+    orientation error [deg]: rms 2.18, mean 1.69, std 1.38, p95 4.29, max 13.37, completed_rms 2.14
+      per_scenario_rms: mean 2.02, std 0.83, median 1.88, max 4.72
+    final position error (last 0.5 s, completed scenarios) [cm]: mean 3.51, max 16.10
+    COM margin to the footprint edge [cm]: mean 10.78, std 3.81, min -0.36, per_scenario_min_mean 8.89, per_scenario_min_p5 4.67
+    COM offset rho (fraction of the half footprint, > 1 = outside): mean 0.165, std 0.107, max 1.037
+    base: mean speed 0.181 m/s, max speed 0.815 m/s, mean |yaw rate| 0.137 rad/s, max tilt 16.42 deg, max distance from spawn 1.18 m
+
+  poly_far: 100 scenarios, 0 failed (0.0 %); tipped 0, COM left the footprint 0; IK failures 0
+    position error [cm]: rms 3.98, mean 2.49, std 3.10, p95 9.39, max 23.04, completed_rms 3.98
+      per_scenario_rms: mean 3.18, std 2.47, median 2.29, max 10.18
+    orientation error [deg]: rms 2.04, mean 1.37, std 1.50, p95 4.30, max 14.00, completed_rms 2.04
+      per_scenario_rms: mean 1.84, std 0.97, median 1.61, max 4.10
+    final position error (last 0.5 s, completed scenarios) [cm]: mean 2.33, max 20.26
+    COM margin to the footprint edge [cm]: mean 10.60, std 3.85, min 0.70, per_scenario_min_mean 8.73, per_scenario_min_p5 4.89
+    COM offset rho (fraction of the half footprint, > 1 = outside): mean 0.171, std 0.120, max 0.926
+    base: mean speed 0.199 m/s, max speed 0.697 m/s, mean |yaw rate| 0.121 rad/s, max tilt 2.97 deg, max distance from spawn 2.32 m
+
+  rigid: 100 scenarios, 0 failed (0.0 %); tipped 0, COM left the footprint 0; IK failures 0
+    position error [cm]: rms 2.51, mean 1.81, std 1.74, p95 5.06, max 16.20, completed_rms 2.51
+      per_scenario_rms: mean 2.06, std 1.28, median 1.82, max 8.49
+    orientation error [deg]: rms 1.61, mean 1.24, std 1.03, p95 3.14, max 11.20, completed_rms 1.61
+      per_scenario_rms: mean 1.54, std 0.53, median 1.57, max 3.99
+    final position error (last 0.5 s, completed scenarios) [cm]: mean 1.82, max 15.69
+    COM margin to the footprint edge [cm]: mean 11.30, std 3.85, min 4.18, per_scenario_min_mean 9.59, per_scenario_min_p5 5.24
+    COM offset rho (fraction of the half footprint, > 1 = outside): mean 0.114, std 0.081, max 0.560
+    base: mean speed 0.134 m/s, max speed 0.466 m/s, mean |yaw rate| 0.116 rad/s, max tilt 1.13 deg, max distance from spawn 1.00 m
+
+  ellipse: 100 scenarios, 1 failed (1.0 %), mean failure time 8.63 s; tipped 1, COM left the footprint 1; IK failures 0
+    position error [cm]: rms 2.57, mean 1.73, std 1.89, p95 4.84, max 24.47, completed_rms 2.40
+      per_scenario_rms: mean 2.11, std 1.57, median 1.70, max 10.13
+    orientation error [deg]: rms 1.58, mean 1.02, std 1.20, p95 3.09, max 16.17, completed_rms 1.51
+      per_scenario_rms: mean 1.40, std 0.78, median 1.26, max 5.09
+    final position error (last 0.5 s, completed scenarios) [cm]: mean 1.73, max 12.41
+    COM margin to the footprint edge [cm]: mean 11.06, std 3.83, min -0.26, per_scenario_min_mean 9.19, per_scenario_min_p5 3.50
+    COM offset rho (fraction of the half footprint, > 1 = outside): mean 0.130, std 0.111, max 1.025
+    base: mean speed 0.173 m/s, max speed 0.649 m/s, mean |yaw rate| 0.104 rad/s, max tilt 17.41 deg, max distance from spawn 1.27 m
+

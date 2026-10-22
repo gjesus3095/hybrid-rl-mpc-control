@@ -28,12 +28,33 @@ def quintic_time_scaling(t: float, duration: float) -> tuple[float, float, float
     return s, ds, dds
 
 
+def align_quaternion_signs(poses: list[Pose]) -> list[Pose]:
+    """Return ``poses`` with each quaternion flipped (q and -q are the same rotation)
+    to the sign of the previous one.
+
+    A ``QuinticTrajectory`` follows the shortest rotation, so it ends on +goal only
+    if the start and goal quaternions have a non-negative dot product, and on -goal
+    otherwise. Aligning the waypoints of a chain makes every segment end exactly on
+    the quaternion the next segment starts from, so the reference quaternion has no
+    sign jumps at segment boundaries.
+    """
+    aligned = list(poses[:1])
+    for pose in poses[1:]:
+        quaternion = np.asarray(pose.quaternion, dtype=float)
+        if np.dot(quaternion, aligned[-1].quaternion) < 0:
+            quaternion = -quaternion
+        aligned.append(Pose(pose.position, quaternion))
+    return aligned
+
+
 class QuinticTrajectory:
     """Rest-to-rest pose interpolation between two poses over ``duration`` seconds.
 
     Position moves along the straight line between the poses. Orientation rotates
     about the fixed world axis of the relative rotation R_goal R_start^T, so the
     angular velocity and acceleration are that rotation vector scaled by ds and dds.
+    The output quaternion ends on +goal when start . goal >= 0 and on -goal otherwise
+    (the same rotation); chain segments through ``align_quaternion_signs``.
     """
 
     def __init__(self, start: Pose, goal: Pose, duration: float):

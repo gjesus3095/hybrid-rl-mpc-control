@@ -8,6 +8,8 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, replace
 
+VIDEO_LIGHT = 1200.0  # distant light intensity of the video scripts (RidgebackDREnv default: 3000)
+
 
 @dataclass(frozen=True)
 class BaseParams:
@@ -53,7 +55,7 @@ class DomainRandomization:
     width: tuple[float, float] = (0.19, 0.52)
     base_mass: tuple[float, float] = (5.5, 38.0)
     base_com_z: tuple[float, float] = (0.10, 0.10)
-    payload: tuple[float, float] = (0.8, 3.0)
+    payload: tuple[float, float] = (0.0, 3.0)  # 0 = no payload (MassModel leaves the hand unchanged)
     hard_bias: float = 2.2
 
     def _low(self, rng: random.Random, bounds: tuple[float, float]) -> float:
